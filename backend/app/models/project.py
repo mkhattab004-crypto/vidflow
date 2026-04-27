@@ -62,6 +62,7 @@ class Scene(Base):
     visual_url: Mapped[str] = mapped_column(String(500), nullable=True)
     visual_source: Mapped[str] = mapped_column(String(50), nullable=True)
     on_screen_source: Mapped[str] = mapped_column(String(500), nullable=True)
+    audio_url: Mapped[str] = mapped_column(String(500), nullable=True)
     transition: Mapped[str] = mapped_column(String(50), default="fade")
     effects: Mapped[list] = mapped_column(JSON, default=list)
 

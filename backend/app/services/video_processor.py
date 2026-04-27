@@ -1,23 +1,45 @@
 """
 Video processing service using FFmpeg.
-Handles combining scenes, adding subtitles, intro/outro, and background music.
+Handles: scene stitching, subtitle burn-in, logo overlay, audio mix,
+intro/outro injection, and multi-format export (16:9 / 9:16 / 1:1).
 """
 import os
 import asyncio
-import json
 import subprocess
+import logging
+import tempfile
 from typing import Optional
 from app.config import settings
 
+logger = logging.getLogger(__name__)
 
-def _run_ffmpeg(cmd: list[str]) -> tuple[bool, str]:
+DIMENSIONS = {
+    "16:9": (1920, 1080),
+    "9:16": (1080, 1920),
+    "1:1":  (1080, 1080),
+}
+
+
+def _run(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
+    """Run an FFmpeg command synchronously."""
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        return result.returncode == 0, result.stderr
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if r.returncode != 0:
+            logger.warning(f"FFmpeg stderr: {r.stderr[-500:]}")
+        return r.returncode == 0, r.stderr
     except subprocess.TimeoutExpired:
         return False, "FFmpeg timeout"
     except FileNotFoundError:
-        return False, "FFmpeg not found"
+        return False, "FFmpeg not installed"
+
+
+def _scale_filter(w: int, h: int) -> str:
+    """Return an FFmpeg scale+pad filter that fills the frame without distortion."""
+    return (
+        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"setsar=1"
+    )
 
 
 async def compose_video(
@@ -28,96 +50,213 @@ async def compose_video(
     intro_path: Optional[str] = None,
     outro_path: Optional[str] = None,
     bg_music_path: Optional[str] = None,
-    subtitle_style: dict = None,
+    subtitle_config: Optional[dict] = None,
     logo_path: Optional[str] = None,
+    logo_position: str = "top-right",
 ) -> bool:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    width, height = _get_dimensions(aspect_ratio)
+    w, h = DIMENSIONS.get(aspect_ratio, (1920, 1080))
 
-    input_list_path = output_path + "_inputs.txt"
-    video_parts = []
-
+    # 1. Build ordered list of video clips
+    clips = []
     if intro_path and os.path.exists(intro_path):
-        video_parts.append(intro_path)
-
+        clips.append(intro_path)
     for scene in scenes:
-        visual_url = scene.get("visual_url")
-        if visual_url and os.path.exists(visual_url):
-            video_parts.append(visual_url)
-
+        vurl = scene.get("visual_url", "")
+        if vurl and os.path.exists(vurl):
+            clips.append(vurl)
     if outro_path and os.path.exists(outro_path):
-        video_parts.append(outro_path)
+        clips.append(outro_path)
 
-    if not video_parts:
-        await _create_placeholder_video(output_path, width, height)
+    if not clips:
+        logger.warning("No video clips available — creating placeholder")
+        await _create_placeholder(output_path, w, h)
         return True
 
-    with open(input_list_path, "w") as f:
-        for p in video_parts:
+    # 2. Normalize each clip to the target resolution
+    normalized = []
+    for i, clip in enumerate(clips):
+        norm = output_path + f"_norm_{i}.mp4"
+        ok, _ = _run([
+            "ffmpeg", "-y", "-i", clip,
+            "-vf", _scale_filter(w, h),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            "-an", "-t", str(scene.get("duration", 10) if i < len(scenes) else 999),
+            norm,
+        ])
+        if ok:
+            normalized.append(norm)
+
+    if not normalized:
+        await _create_placeholder(output_path, w, h)
+        return True
+
+    # 3. Concatenate all normalized clips
+    concat_file = output_path + "_concat.txt"
+    with open(concat_file, "w") as f:
+        for p in normalized:
             f.write(f"file '{p}'\n")
 
     concat_path = output_path + "_concat.mp4"
-    ok, err = _run_ffmpeg([
+    ok, _ = _run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", input_list_path,
-        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-an", concat_path
+        "-i", concat_file,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+        "-an", concat_path,
     ])
+    if not ok:
+        await _create_placeholder(output_path, w, h)
+        return True
 
-    final_inputs = ["-i", concat_path]
-    final_inputs += ["-i", audio_path] if audio_path and os.path.exists(audio_path) else []
-    if bg_music_path and os.path.exists(bg_music_path):
-        final_inputs += ["-i", bg_music_path]
+    # 4. Build final command with audio, subtitles, logo
+    inputs = ["-i", concat_path]
+    filter_parts = []
+    audio_ok = audio_path and os.path.exists(audio_path)
+    bg_ok = bg_music_path and os.path.exists(bg_music_path)
 
-    audio_filter = ""
-    if bg_music_path and os.path.exists(bg_music_path):
-        audio_filter = ";[1:a]volume=1.0[main];[2:a]volume=0.15[bg];[main][bg]amix=inputs=2:duration=first[outa]"
-        audio_map = ["-map", "0:v", "-map", "[outa]"]
-    else:
-        audio_map = ["-map", "0:v", "-map", "1:a"] if audio_path and os.path.exists(audio_path) else ["-map", "0:v"]
+    if audio_ok:
+        inputs += ["-i", audio_path]
+    if bg_ok:
+        inputs += ["-i", bg_music_path]
 
-    cmd = ["ffmpeg", "-y"] + final_inputs
-    if audio_filter:
-        cmd += ["-filter_complex", audio_filter]
+    video_stream = "[0:v]"
+
+    # Logo overlay
+    if logo_path and os.path.exists(logo_path):
+        inputs += ["-i", logo_path]
+        logo_idx = inputs.count("-i") - 1
+        overlay_pos = _logo_overlay_pos(logo_position, w, h)
+        filter_parts.append(f"{video_stream}[{logo_idx}:v]overlay={overlay_pos}[vlogo]")
+        video_stream = "[vlogo]"
+
+    # Subtitle burn-in (from SRT file)
+    srt_path = output_path.replace(".mp4", ".srt")
+    if subtitle_config and os.path.exists(srt_path):
+        sub_style = _build_subtitle_style(subtitle_config, h)
+        filter_parts.append(f"{video_stream}subtitles={srt_path}:force_style='{sub_style}'[vsub]")
+        video_stream = "[vsub]"
+
+    # Audio mix
+    audio_map = []
+    if audio_ok and bg_ok:
+        a_idx = inputs.index(audio_path) // 2
+        bg_idx = inputs.index(bg_music_path) // 2
+        filter_parts.append(
+            f"[{a_idx}:a]volume=1.0[main];"
+            f"[{bg_idx}:a]volume=0.12,aloop=loop=-1:size=2e+09[bg];"
+            f"[main][bg]amix=inputs=2:duration=first[aout]"
+        )
+        audio_map = ["-map", "[aout]"]
+    elif audio_ok:
+        a_idx = inputs.index(audio_path) // 2
+        audio_map = ["-map", f"{a_idx}:a"]
+
+    cmd = ["ffmpeg", "-y"] + inputs
+    if filter_parts:
+        cmd += ["-filter_complex", ";".join(filter_parts)]
+    cmd += ["-map", video_stream.strip("[]") if video_stream != "[0:v]" else "0:v"]
+    if not filter_parts:
+        cmd[-1] = "0:v"
     cmd += audio_map
-    cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "23", "-c:a", "aac", "-b:a", "192k", output_path]
+    cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "21"]
+    if audio_ok or bg_ok:
+        cmd += ["-c:a", "aac", "-b:a", "192k"]
+    cmd += ["-movflags", "+faststart", output_path]
 
-    ok, err = _run_ffmpeg(cmd)
-    for tmp in [input_list_path, concat_path]:
+    ok, err = _run(cmd)
+
+    # Cleanup temp files
+    for f in normalized + [concat_file, concat_path]:
         try:
-            os.remove(tmp)
+            os.remove(f)
         except Exception:
             pass
+
+    if not ok:
+        logger.error(f"Final composition failed: {err[-300:]}")
     return ok
 
 
-async def _create_placeholder_video(output_path: str, width: int, height: int):
-    _run_ffmpeg([
+def _logo_overlay_pos(position: str, w: int, h: int) -> str:
+    pad = 20
+    positions = {
+        "top-right":    f"{w}-overlay_w-{pad}:{pad}",
+        "top-left":     f"{pad}:{pad}",
+        "bottom-right": f"{w}-overlay_w-{pad}:{h}-overlay_h-{pad}",
+        "bottom-left":  f"{pad}:{h}-overlay_h-{pad}",
+    }
+    return positions.get(position, positions["top-right"])
+
+
+def _build_subtitle_style(config: dict, frame_height: int) -> str:
+    size_map = {"small": 18, "medium": 24, "large": 32}
+    font_size = size_map.get(config.get("subtitle_size", "large"), 28)
+    color = _color_to_ass(config.get("subtitle_color", "#ffffff"))
+    position_map = {"bottom": 2, "top": 8, "center": 5}
+    alignment = position_map.get(config.get("subtitle_position", "bottom"), 2)
+    margin_v = int(frame_height * 0.05)
+    return (
+        f"FontSize={font_size},PrimaryColour={color},"
+        f"Alignment={alignment},MarginV={margin_v},"
+        f"BorderStyle=3,Outline=1,Shadow=0.5,"
+        f"Bold=1"
+    )
+
+
+def _color_to_ass(hex_color: str) -> str:
+    """Convert #RRGGBB to ASS &H00BBGGRR format."""
+    c = hex_color.lstrip("#")
+    if len(c) == 3:
+        c = "".join(x * 2 for x in c)
+    r, g, b = c[0:2], c[2:4], c[4:6]
+    return f"&H00{b}{g}{r}"
+
+
+async def _create_placeholder(output_path: str, w: int, h: int) -> None:
+    _run([
         "ffmpeg", "-y",
-        "-f", "lavfi", "-i", f"color=c=black:size={width}x{height}:duration=5",
-        "-c:v", "libx264", output_path
+        "-f", "lavfi", "-i", f"color=c=black:size={w}x{h}:duration=3:rate=25",
+        "-c:v", "libx264", output_path,
     ])
 
 
-def _get_dimensions(aspect_ratio: str) -> tuple[int, int]:
-    mapping = {"16:9": (1920, 1080), "9:16": (1080, 1920), "1:1": (1080, 1080)}
-    return mapping.get(aspect_ratio, (1920, 1080))
+async def generate_srt(scenes: list[dict], output_path: str) -> str:
+    """
+    Write an SRT subtitle file from scene timings.
+    scenes must have: script_text, start_time, actual_duration
+    """
+    lines = []
+    for i, scene in enumerate(scenes, 1):
+        start = scene.get("start_time", 0)
+        dur = scene.get("actual_duration", scene.get("duration", 5))
+        text = scene.get("script_text", "")
+        if not text:
+            continue
+        lines.append(str(i))
+        lines.append(f"{_srt_time(start)} --> {_srt_time(start + dur)}")
+        lines.append(text.strip())
+        lines.append("")
+    srt_path = output_path.replace(".mp4", ".srt")
+    with open(srt_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return srt_path
+
+
+def _srt_time(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds - int(seconds)) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 async def convert_aspect_ratio(input_path: str, output_path: str, aspect_ratio: str) -> bool:
-    width, height = _get_dimensions(aspect_ratio)
-    ok, _ = _run_ffmpeg([
+    w, h = DIMENSIONS.get(aspect_ratio, (1920, 1080))
+    ok, _ = _run([
         "ffmpeg", "-y", "-i", input_path,
-        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
-        "-c:v", "libx264", "-preset", "fast", "-c:a", "copy", output_path
-    ])
-    return ok
-
-
-async def extract_audio(video_path: str, audio_path: str) -> bool:
-    ok, _ = _run_ffmpeg([
-        "ffmpeg", "-y", "-i", video_path,
-        "-vn", "-acodec", "copy", audio_path
+        "-vf", _scale_filter(w, h),
+        "-c:v", "libx264", "-preset", "fast", "-crf", "21",
+        "-c:a", "copy",
+        output_path,
     ])
     return ok

@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -10,6 +11,8 @@ from app.schemas.project import (
     SceneUpdate, ContentGenerateRequest
 )
 from app.services import gemini
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -170,3 +173,85 @@ async def copy_project(project_id: str, db: AsyncSession = Depends(get_db)):
         ))
     await db.commit()
     return {"new_project_id": new_project.id}
+
+
+@router.post("/{project_id}/optimize-seo")
+async def optimize_seo(project_id: str, db: AsyncSession = Depends(get_db)):
+    """Use Gemini to improve title, description, and tags for YouTube SEO."""
+    project = await _load_project(project_id, db)
+    channel = await db.get(Channel, project.channel_id)
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+
+    optimized = await gemini.optimize_metadata(
+        title=project.title,
+        description=project.description or "",
+        niche=channel.niche,
+        language=channel.language,
+    )
+    project.title = optimized.get("optimized_title", project.title)
+    project.description = optimized.get("optimized_description", project.description)
+    project.metadata_tags = optimized.get("tags", project.metadata_tags)
+    project.pinned_comment = optimized.get("pinned_comment", project.pinned_comment)
+
+    extra = project.extra_config if hasattr(project, "extra_config") else {}
+    script_json = project.script or {}
+    script_json["youtube_chapters"] = optimized.get("chapters", [])
+    project.script = script_json
+
+    await db.commit()
+    logger.info(f"SEO optimized project {project_id}")
+    return {"optimized": optimized, "project_id": project_id}
+
+
+@router.get("/{project_id}/export-bundle")
+async def export_bundle(project_id: str, db: AsyncSession = Depends(get_db)):
+    """Return full project data in a single payload for archiving."""
+    project = await _load_project(project_id, db)
+    channel = await db.get(Channel, project.channel_id)
+    return {
+        "project_id": project_id,
+        "channel": {"id": channel.id, "name": channel.name, "niche": channel.niche} if channel else None,
+        "title": project.title,
+        "idea": project.idea,
+        "video_type": project.video_type,
+        "status": project.status,
+        "description": project.description,
+        "pinned_comment": project.pinned_comment,
+        "thumbnail_prompt": project.thumbnail_prompt,
+        "tags": project.metadata_tags,
+        "sharia_reference": project.sharia_reference,
+        "trust_level": project.trust_level,
+        "scenes": [
+            {
+                "order": s.order,
+                "script_text": s.script_text,
+                "script_ar": s.script_ar,
+                "duration": s.duration,
+                "visual_query": s.visual_query,
+                "visual_type": s.visual_type,
+                "visual_url": s.visual_url,
+                "on_screen_source": s.on_screen_source,
+                "transition": s.transition,
+                "effects": s.effects,
+            }
+            for s in project.scenes
+        ],
+        "template": {
+            "aspect_ratio": project.aspect_ratio,
+            **project.template_config,
+        },
+        "voice_id": project.voice_id,
+        "audio_speed": project.audio_speed,
+        "reviews": {
+            "review1": project.review1_approved,
+            "review2": project.review2_approved,
+            "review3": project.review3_approved,
+        },
+        "outputs": {
+            "16:9": project.output_url,
+            "9:16": project.output_9_16_url,
+            "1:1": project.output_1_1_url,
+        },
+        "created_at": project.created_at.isoformat() if project.created_at else None,
+    }
