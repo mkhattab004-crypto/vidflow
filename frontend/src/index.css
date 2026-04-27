@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { @apply bg-surface-900 text-slate-100; }
+  body { @apply min-h-screen font-sans antialiased; }
+  * { @apply border-surface-700; }
+  ::-webkit-scrollbar { @apply w-1.5; }
+  ::-webkit-scrollbar-track { @apply bg-surface-800; }
+  ::-webkit-scrollbar-thumb { @apply bg-surface-600 rounded-full; }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface-900 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-brand-600 hover:bg-brand-500 text-white focus:ring-brand-500;
+  }
+  .btn-secondary {
+    @apply btn bg-surface-700 hover:bg-surface-600 text-slate-200 focus:ring-surface-500;
+  }
+  .btn-danger {
+    @apply btn bg-red-700 hover:bg-red-600 text-white focus:ring-red-500;
+  }
+  .btn-ghost {
+    @apply btn hover:bg-surface-700 text-slate-300 hover:text-slate-100;
+  }
+  .card {
+    @apply bg-surface-800 border border-surface-700 rounded-xl p-5;
+  }
+  .input {
+    @apply w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all;
+  }
+  .label {
+    @apply block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wider;
+  }
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  }
+  .badge-blue { @apply badge bg-blue-900/50 text-blue-300 border border-blue-800; }
+  .badge-green { @apply badge bg-green-900/50 text-green-300 border border-green-800; }
+  .badge-yellow { @apply badge bg-yellow-900/50 text-yellow-300 border border-yellow-800; }
+  .badge-red { @apply badge bg-red-900/50 text-red-300 border border-red-800; }
+  .badge-purple { @apply badge bg-purple-900/50 text-purple-300 border border-purple-800; }
+  .badge-gray { @apply badge bg-slate-700 text-slate-300; }
+  .section-title {
+    @apply text-lg font-semibold text-slate-100 mb-4;
+  }
+  .page-title {
+    @apply text-2xl font-bold text-slate-50 mb-1;
+  }
+  .page-subtitle {
+    @apply text-sm text-slate-400 mb-6;
+  }
+  .arabic-text {
+    @apply font-arabic text-right leading-loose;
+  }
+}
+
+.rtl { direction: rtl; }
+.ltr { direction: ltr; }
