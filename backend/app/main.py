@@ -7,13 +7,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.database import create_tables
+from app.database import create_tables, engine
 from app.logging_config import setup_logging
 from app.routers import channels, ideas, projects, visuals, audio, video, export, islamic
 from app.routers import automation, thumbnail
 
 # ---------------------------------------------------------------------------
-# Logging — JSON in production, human-readable locally
+# Logging
 # ---------------------------------------------------------------------------
 _is_prod = os.getenv("RAILWAY_ENVIRONMENT") is not None
 setup_logging(
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Lifespan (startup / shutdown)
+# Lifespan
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
@@ -32,8 +32,12 @@ async def lifespan(app: FastAPI):
     logger.info("VidFlow starting up...")
     for d in [settings.UPLOAD_DIR, settings.OUTPUT_DIR]:
         os.makedirs(d, exist_ok=True)
-    await create_tables()
-    logger.info("Database tables ready")
+    try:
+        await create_tables()
+        logger.info("Database tables ready")
+    except Exception as e:
+        logger.warning(f"Database unavailable on startup: {e}")
+        logger.warning("Add a PostgreSQL service to Railway and set DATABASE_URL to enable DB features.")
     yield
     logger.info("VidFlow shutting down")
 
@@ -70,9 +74,7 @@ async def log_requests(request: Request, call_next):
     start = time.perf_counter()
     response = await call_next(request)
     duration = (time.perf_counter() - start) * 1000
-    logger.info(
-        f"{request.method} {request.url.path} → {response.status_code} ({duration:.1f}ms)"
-    )
+    logger.info(f"{request.method} {request.url.path} → {response.status_code} ({duration:.1f}ms)")
     return response
 
 
@@ -102,7 +104,8 @@ app.include_router(islamic.router,     prefix=PREFIX)
 app.include_router(automation.router,  prefix=PREFIX)
 app.include_router(thumbnail.router,   prefix=PREFIX)
 
-# Static file serving (uploads)
+# Static file serving — create the dir first so StaticFiles doesn't crash on import
+os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=settings.UPLOAD_DIR), name="static")
 
 
@@ -112,8 +115,17 @@ app.mount("/static", StaticFiles(directory=settings.UPLOAD_DIR), name="static")
 
 @app.get("/api/health", tags=["system"])
 async def health():
+    db_ok = False
+    try:
+        from sqlalchemy import text
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        pass
     return {
         "status": "ok",
+        "db": "connected" if db_ok else "disconnected — add PostgreSQL on Railway",
         "version": "1.0.0",
         "environment": "production" if _is_prod else "development",
     }

@@ -1,10 +1,21 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from typing import Optional
 
 
 class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/vidflow"
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def fix_db_url(cls, v: str) -> str:
+        # Railway (and Heroku) provide postgres:// or plain postgresql:// — convert for asyncpg
+        if v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql+asyncpg://", 1)
+        if v.startswith("postgresql://") and "+asyncpg" not in v:
+            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v
 
     # APIs
     GEMINI_API_KEY: str = ""
