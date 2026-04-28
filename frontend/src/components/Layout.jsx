@@ -2,21 +2,22 @@ import React from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   Tv2, Lightbulb, FileText, Image, Mic, Layout as LayoutIcon,
-  CheckSquare, Download, Archive, ChevronLeft, ChevronRight, Zap
+  CheckSquare, Download, Archive, ChevronLeft, ChevronRight, Zap, LayoutDashboard
 } from 'lucide-react'
 import useStore from '../store/useStore'
 import clsx from 'clsx'
 
 const NAV = [
-  { to: '/channels', icon: Tv2, label: 'Channels', labelAr: 'القنوات' },
-  { to: '/ideas', icon: Lightbulb, label: 'Ideas', labelAr: 'الأفكار' },
-  { to: '/content', icon: FileText, label: 'Content', labelAr: 'المحتوى' },
-  { to: '/visuals', icon: Image, label: 'Visuals', labelAr: 'الفيجولز' },
-  { to: '/audio', icon: Mic, label: 'Audio', labelAr: 'الصوت' },
-  { to: '/templates', icon: LayoutIcon, label: 'Templates', labelAr: 'التامبلت' },
-  { to: '/review', icon: CheckSquare, label: 'Review', labelAr: 'المراجعة' },
-  { to: '/export', icon: Download, label: 'Export', labelAr: 'التصدير' },
-  { to: '/projects', icon: Archive, label: 'Projects', labelAr: 'المشاريع' },
+  { to: '/',          icon: LayoutDashboard, label: 'Dashboard',  end: true },
+  { to: '/channels',  icon: Tv2,             label: 'Channels'  },
+  { to: '/ideas',     icon: Lightbulb,       label: 'Ideas'     },
+  { to: '/content',   icon: FileText,        label: 'Content'   },
+  { to: '/visuals',   icon: Image,           label: 'Visuals'   },
+  { to: '/audio',     icon: Mic,             label: 'Audio'     },
+  { to: '/templates', icon: LayoutIcon,      label: 'Templates' },
+  { to: '/review',    icon: CheckSquare,     label: 'Review'    },
+  { to: '/export',    icon: Download,        label: 'Export'    },
+  { to: '/projects',  icon: Archive,         label: 'Projects'  },
 ]
 
 export default function Layout({ children }) {
@@ -43,10 +44,11 @@ export default function Layout({ children }) {
 
         {/* Nav */}
         <nav className="flex-1 py-4 overflow-y-auto">
-          {NAV.map(({ to, icon: Icon, label }) => (
+          {NAV.map((item) => (
             <NavLink
-              key={to}
-              to={to}
+              key={item.to}
+              to={item.to}
+              end={item.end}
               className={({ isActive }) =>
                 clsx(
                   'flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-all mx-2 rounded-lg mb-0.5',
@@ -56,8 +58,8 @@ export default function Layout({ children }) {
                 )
               }
             >
-              <Icon size={18} className="shrink-0" />
-              {sidebarOpen && <span>{label}</span>}
+              <item.icon size={18} className="shrink-0" />
+              {sidebarOpen && <span>{item.label}</span>}
             </NavLink>
           ))}
         </nav>

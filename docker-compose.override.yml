@@ -1,0 +1,49 @@
+version: "3.9"
+# Local development overrides — hot reload, exposed ports, dev env vars.
+# Used automatically by: docker-compose up
+# Production uses docker-compose.yml only.
+
+services:
+  db:
+    ports:
+      - "5432:5432"    # expose Postgres locally for DB tools
+
+  backend:
+    build:
+      context: ./backend
+      target: builder          # use builder stage if multi-stage
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --log-level info
+    volumes:
+      - ./backend:/app         # live code reload
+      - uploads:/app/uploads
+      - outputs:/app/outputs
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/vidflow
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
+      SECRET_KEY: dev-secret-key-not-for-production
+      UPLOAD_DIR: /app/uploads
+      OUTPUT_DIR: /app/outputs
+      LOG_LEVEL: DEBUG
+      CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000","http://localhost"]'
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "80:80"
+    environment:
+      - NODE_ENV=development
+
+volumes:
+  pgdata:
+  uploads:
+  outputs:

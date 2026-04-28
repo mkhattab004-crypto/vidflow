@@ -1,6 +1,7 @@
 import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
+import Dashboard from './pages/Dashboard'
 import Channels from './pages/Channels'
 import Ideas from './pages/Ideas'
 import Content from './pages/Content'
@@ -16,7 +17,7 @@ export default function App() {
     <BrowserRouter>
       <Layout>
         <Routes>
-          <Route path="/" element={<Navigate to="/channels" replace />} />
+          <Route path="/" element={<Dashboard />} />
           <Route path="/channels" element={<Channels />} />
           <Route path="/ideas" element={<Ideas />} />
           <Route path="/content" element={<Content />} />
