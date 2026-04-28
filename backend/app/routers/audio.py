@@ -183,4 +183,4 @@ async def download_audio(project_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Audio not found")
     if not os.path.exists(project.audio_url):
         raise HTTPException(status_code=404, detail="Audio file not found on disk")
-    return FileResponse(project.audio_url, media_type="audio/wav", filename=f"{project_id}_narration.wav")
+    return FileResponse(project.audio_url, media_type="audio/mpeg", filename=f"{project_id}_narration.mp3")

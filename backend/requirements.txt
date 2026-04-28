@@ -14,7 +14,4 @@ aiofiles==23.2.1
 pillow==10.3.0
 google-generativeai==0.5.4
 python-dotenv==1.0.1
-ffmpeg-python==0.2.0
-kokoro-onnx==0.4.4
-soundfile==0.12.1
-numpy==1.26.4
+gTTS==2.5.1
