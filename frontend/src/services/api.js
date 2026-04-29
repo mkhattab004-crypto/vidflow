@@ -19,6 +19,9 @@ api.interceptors.response.use(
   }
 )
 
+// Ensure API response is always an array (guards against HTML fallback pages, null, etc.)
+const toArr = (r) => (Array.isArray(r.data) ? r.data : [])
+
 // Helper: trigger a file download from a blob response
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
@@ -31,7 +34,7 @@ export function downloadBlob(blob, filename) {
 
 // ── Channels ─────────────────────────────────────────────────────────────────
 
-export const getChannels     = ()        => api.get('/channels').then(r => r.data)
+export const getChannels     = ()        => api.get('/channels').then(toArr)
 export const getChannel      = (id)      => api.get(`/channels/${id}`).then(r => r.data)
 export const createChannel   = (data)    => api.post('/channels', data).then(r => r.data)
 export const updateChannel   = (id, d)   => api.put(`/channels/${id}`, d).then(r => r.data)
@@ -48,13 +51,13 @@ export const deleteCTA  = (cid, ctid) => api.delete(`/channels/${cid}/ctas/${cti
 
 // ── Ideas ─────────────────────────────────────────────────────────────────────
 
-export const suggestIdeas    = (data)  => api.post('/ideas/suggest', data).then(r => r.data)
+export const suggestIdeas    = (data)  => api.post('/ideas/suggest', data).then(toArr)
 export const checkDuplicate  = (data)  => api.post('/ideas/check-duplicate', data).then(r => r.data)
-export const getVideoTypes   = ()      => api.get('/ideas/video-types').then(r => r.data)
+export const getVideoTypes   = ()      => api.get('/ideas/video-types').then(toArr)
 
 // ── Projects ─────────────────────────────────────────────────────────────────
 
-export const getProjects      = (params)         => api.get('/projects', { params }).then(r => r.data)
+export const getProjects      = (params)         => api.get('/projects', { params }).then(toArr)
 export const getProject       = (id)             => api.get(`/projects/${id}`).then(r => r.data)
 export const createProject    = (data)           => api.post('/projects', data).then(r => r.data)
 export const updateProject    = (id, data)       => api.put(`/projects/${id}`, data).then(r => r.data)
@@ -74,7 +77,7 @@ export const getVisualGaps  = (pid)             => api.get(`/visuals/gap-analysi
 
 // ── Audio ─────────────────────────────────────────────────────────────────────
 
-export const getVoices         = (language)   => api.get('/audio/voices', { params: language ? { language } : {} }).then(r => r.data)
+export const getVoices         = (language)   => api.get('/audio/voices', { params: language ? { language } : {} }).then(toArr)
 export const getVoicesByLang   = ()           => api.get('/audio/voices/by-language').then(r => r.data)
 export const generateAudio     = (data)       => api.post('/audio/generate', data).then(r => r.data)
 export const generateSceneAudio = (data)      => api.post('/audio/generate-scene', data).then(r => r.data)
