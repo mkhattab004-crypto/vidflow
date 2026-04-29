@@ -29,10 +29,10 @@ def _clean_json(text: str) -> str:
 
 
 async def _generate(prompt: str, attempt: int = 0) -> str:
-    """Call Gemini with retry on quota/server errors."""
+    """Call Gemini with retry on quota/server errors. Returns '' on final failure."""
     try:
         model = _get_model()
-        response = model.generate_content(prompt)
+        response = await asyncio.to_thread(model.generate_content, prompt)
         return response.text
     except Exception as e:
         err = str(e)
@@ -42,7 +42,7 @@ async def _generate(prompt: str, attempt: int = 0) -> str:
             await asyncio.sleep(wait)
             return await _generate(prompt, attempt + 1)
         logger.error(f"Gemini failed after {attempt} retries: {e}")
-        raise
+        return ""
 
 
 # ---------------------------------------------------------------------------
