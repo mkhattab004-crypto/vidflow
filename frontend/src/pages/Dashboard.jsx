@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Tv2, Archive, CheckSquare, Video, Zap, ArrowRight, BookOpen, Mic } from 'lucide-react'
 import { getDashboardStats, getChannels, getProjects } from '../services/api'
+import useStore from '../store/useStore'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import StatusBadge from '../components/common/StatusBadge'
 
@@ -22,6 +23,7 @@ function StatCard({ icon: Icon, label, value, color = 'text-brand-400' }) {
 
 export default function Dashboard() {
   const navigate = useNavigate()
+  const { setActiveProjectId } = useStore()
   const { data: stats } = useQuery({ queryKey: ['dashboard'], queryFn: getDashboardStats, refetchInterval: 30000 })
   const { data: channels = [] } = useQuery({ queryKey: ['channels'], queryFn: getChannels })
   const { data: recentProjects = [] } = useQuery({
@@ -166,7 +168,7 @@ export default function Dashboard() {
                         <td className="py-2.5 pr-4"><StatusBadge status={p.status} /></td>
                         <td className="py-2.5 pr-4 text-slate-400">{p.created_at ? new Date(p.created_at).toLocaleDateString() : '—'}</td>
                         <td className="py-2.5">
-                          <button onClick={() => navigate('/content')} className="text-xs text-brand-400 hover:text-brand-300">Open →</button>
+                          <button onClick={() => { setActiveProjectId(p.id); navigate('/content') }} className="text-xs text-brand-400 hover:text-brand-300">Open →</button>
                         </td>
                       </tr>
                     ))}

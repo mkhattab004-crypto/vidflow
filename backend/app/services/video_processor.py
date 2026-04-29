@@ -57,16 +57,20 @@ async def compose_video(
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     w, h = DIMENSIONS.get(aspect_ratio, (1920, 1080))
 
-    # 1. Build ordered list of video clips
+    # 1. Build ordered list of video clips with their target durations
     clips = []
+    clip_durations = []
     if intro_path and os.path.exists(intro_path):
         clips.append(intro_path)
+        clip_durations.append(999)
     for scene in scenes:
         vurl = scene.get("visual_url", "")
         if vurl and os.path.exists(vurl):
             clips.append(vurl)
+            clip_durations.append(scene.get("duration", 10))
     if outro_path and os.path.exists(outro_path):
         clips.append(outro_path)
+        clip_durations.append(999)
 
     if not clips:
         logger.warning("No video clips available — creating placeholder")
@@ -81,7 +85,7 @@ async def compose_video(
             "ffmpeg", "-y", "-i", clip,
             "-vf", _scale_filter(w, h),
             "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-            "-an", "-t", str(scene.get("duration", 10) if i < len(scenes) else 999),
+            "-an", "-t", str(clip_durations[i]),
             norm,
         ])
         if ok:
@@ -154,9 +158,9 @@ async def compose_video(
     cmd = ["ffmpeg", "-y"] + inputs
     if filter_parts:
         cmd += ["-filter_complex", ";".join(filter_parts)]
-    cmd += ["-map", video_stream.strip("[]") if video_stream != "[0:v]" else "0:v"]
-    if not filter_parts:
-        cmd[-1] = "0:v"
+        cmd += ["-map", video_stream]
+    else:
+        cmd += ["-map", "0:v"]
     cmd += audio_map
     cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "21"]
     if audio_ok or bg_ok:

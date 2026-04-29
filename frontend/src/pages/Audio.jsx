@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { Mic, Play, ArrowRight } from 'lucide-react'
-import { getProjects, getProject, getVoices, generateAudio, updateProject } from '../services/api'
+import { getProjects, getProject, getVoices, generateAudio, updateProject, previewVoiceUrl } from '../services/api'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import useStore from '../store/useStore'
 import { useNavigate } from 'react-router-dom'
@@ -14,6 +14,7 @@ export default function Audio() {
   const [selectedVoice, setSelectedVoice] = useState('')
   const [speed, setSpeed] = useState(1.0)
   const [previewText, setPreviewText] = useState('')
+  const [previewSrc, setPreviewSrc] = useState('')
 
   const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: () => getProjects() })
   const { data: project } = useQuery({ queryKey: ['project', activeProjectId], queryFn: () => getProject(activeProjectId), enabled: !!activeProjectId })
@@ -83,9 +84,18 @@ export default function Audio() {
       <div className="card mb-4">
         <label className="label">Preview Text</label>
         <textarea className="input resize-none mb-2" rows={2} placeholder="Type text to preview voice..." value={previewText} onChange={(e) => setPreviewText(e.target.value)} />
-        <button className="btn-secondary text-sm" disabled={!selectedVoice || !previewText}>
+        <button
+          className="btn-secondary text-sm"
+          disabled={!selectedVoice || !previewText}
+          onClick={() => setPreviewSrc(previewVoiceUrl(previewText, selectedVoice, speed))}
+        >
           <Play size={14} /> Preview Voice
         </button>
+        {previewSrc && (
+          <audio key={previewSrc} controls autoPlay className="w-full mt-3">
+            <source src={previewSrc} type="audio/mpeg" />
+          </audio>
+        )}
       </div>
 
       {project?.audio_url && (

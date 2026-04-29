@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.database import create_tables, engine
+from app.database import create_tables, engine, AsyncSessionLocal
 from app.logging_config import setup_logging
 from app.routers import channels, ideas, projects, visuals, audio, video, export, islamic
 from app.routers import automation, thumbnail
@@ -30,14 +30,27 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("VidFlow starting up...")
+
+    if not settings.PEXELS_API_KEY:
+        logger.warning("PEXELS_API_KEY not set — Pexels visual search disabled")
+    if not settings.PIXABAY_API_KEY:
+        logger.warning("PIXABAY_API_KEY not set — Pixabay visual search disabled")
+    if not settings.GEMINI_API_KEY:
+        logger.warning("GEMINI_API_KEY not set — AI script generation will return fallback content")
+
     for d in [settings.UPLOAD_DIR, settings.OUTPUT_DIR]:
         os.makedirs(d, exist_ok=True)
+
     try:
         await create_tables()
         logger.info("Database tables ready")
+        from app.seed import seed_channels
+        async with AsyncSessionLocal() as db:
+            await seed_channels(db)
     except Exception as e:
         logger.warning(f"Database unavailable on startup: {e}")
         logger.warning("Add a PostgreSQL service to Railway and set DATABASE_URL to enable DB features.")
+
     yield
     logger.info("VidFlow shutting down")
 

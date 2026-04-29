@@ -53,14 +53,14 @@ async def voices_by_language():
     return grouped
 
 
-@router.post("/preview")
-async def preview_voice(req: PreviewRequest):
-    """Generate a short audio preview for a voice."""
-    text = req.text[:250].strip() or "Hello, this is a voice preview."
-    path = await generate_speech(text, req.voice_id, req.speed)
+@router.get("/preview")
+async def preview_voice(text: str, voice_id: str, speed: float = 1.0):
+    """Generate a short audio preview for a voice (GET so browser <audio> can use it directly)."""
+    text = text[:250].strip() or "Hello, this is a voice preview."
+    path = await generate_speech(text, voice_id, speed)
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=500, detail="Audio generation failed")
-    return FileResponse(path, media_type="audio/wav", filename="preview.wav")
+    return FileResponse(path, media_type="audio/mpeg", filename="preview.mp3")
 
 
 @router.post("/generate")
