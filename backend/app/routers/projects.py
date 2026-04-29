@@ -52,8 +52,7 @@ async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)
     project = Project(**data.model_dump())
     db.add(project)
     await db.commit()
-    await db.refresh(project)
-    return project
+    return await _load_project(project.id, db)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)

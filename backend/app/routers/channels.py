@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
+from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.channel import Channel, ChannelHook, ChannelCTA
 from app.schemas.channel import ChannelCreate, ChannelUpdate, ChannelOut, ChannelList, ChannelHookBase, ChannelCTABase
@@ -8,6 +9,18 @@ import os, uuid, shutil
 from app.config import settings
 
 router = APIRouter(prefix="/channels", tags=["channels"])
+
+
+async def _load_channel(channel_id: str, db: AsyncSession) -> Channel:
+    result = await db.execute(
+        select(Channel)
+        .options(selectinload(Channel.hooks), selectinload(Channel.ctas))
+        .where(Channel.id == channel_id)
+    )
+    channel = result.scalar_one_or_none()
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    return channel
 
 
 @router.get("", response_model=list[ChannelList])
@@ -21,16 +34,12 @@ async def create_channel(data: ChannelCreate, db: AsyncSession = Depends(get_db)
     channel = Channel(**data.model_dump())
     db.add(channel)
     await db.commit()
-    await db.refresh(channel)
-    return channel
+    return await _load_channel(channel.id, db)
 
 
 @router.get("/{channel_id}", response_model=ChannelOut)
 async def get_channel(channel_id: str, db: AsyncSession = Depends(get_db)):
-    channel = await db.get(Channel, channel_id)
-    if not channel:
-        raise HTTPException(status_code=404, detail="Channel not found")
-    return channel
+    return await _load_channel(channel_id, db)
 
 
 @router.put("/{channel_id}", response_model=ChannelOut)
@@ -41,8 +50,7 @@ async def update_channel(channel_id: str, data: ChannelUpdate, db: AsyncSession 
     for k, v in data.model_dump(exclude_none=True).items():
         setattr(channel, k, v)
     await db.commit()
-    await db.refresh(channel)
-    return channel
+    return await _load_channel(channel_id, db)
 
 
 @router.delete("/{channel_id}", status_code=204)
