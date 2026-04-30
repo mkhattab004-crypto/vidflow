@@ -3,6 +3,17 @@ from typing import Optional, List, Any
 from datetime import datetime
 
 
+class ChannelInfo(BaseModel):
+    id: str
+    name: str
+    language: str = "en"
+    is_islamic: bool = False
+    niche: str = "educational"
+    primary_color: str = "#0ea5e9"
+
+    model_config = {"from_attributes": True}
+
+
 class SceneOut(BaseModel):
     id: int
     order: int
@@ -106,6 +117,7 @@ class ProjectOut(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     scenes: List[SceneOut] = []
+    channel: Optional[ChannelInfo] = None
 
     model_config = {"from_attributes": True}
 

@@ -21,7 +21,7 @@ DIMENSIONS = {
 
 
 def _run(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
-    """Run an FFmpeg command synchronously."""
+    """Run an FFmpeg command synchronously (use _run_async from async contexts)."""
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if r.returncode != 0:
@@ -31,6 +31,11 @@ def _run(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
         return False, "FFmpeg timeout"
     except FileNotFoundError:
         return False, "FFmpeg not installed"
+
+
+async def _run_async(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
+    """Run FFmpeg in a thread pool so it doesn't block the async event loop."""
+    return await asyncio.to_thread(_run, cmd, timeout)
 
 
 def _scale_filter(w: int, h: int) -> str:
@@ -81,7 +86,7 @@ async def compose_video(
     normalized = []
     for i, clip in enumerate(clips):
         norm = output_path + f"_norm_{i}.mp4"
-        ok, _ = _run([
+        ok, _ = await _run_async([
             "ffmpeg", "-y", "-i", clip,
             "-vf", _scale_filter(w, h),
             "-c:v", "libx264", "-preset", "fast", "-crf", "22",
@@ -102,7 +107,7 @@ async def compose_video(
             f.write(f"file '{p}'\n")
 
     concat_path = output_path + "_concat.mp4"
-    ok, _ = _run([
+    ok, _ = await _run_async([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
         "-i", concat_file,
         "-c:v", "libx264", "-preset", "fast", "-crf", "22",
@@ -167,7 +172,7 @@ async def compose_video(
         cmd += ["-c:a", "aac", "-b:a", "192k"]
     cmd += ["-movflags", "+faststart", output_path]
 
-    ok, err = _run(cmd)
+    ok, err = await _run_async(cmd)
 
     # Cleanup temp files
     for f in normalized + [concat_file, concat_path]:
@@ -217,7 +222,7 @@ def _color_to_ass(hex_color: str) -> str:
 
 
 async def _create_placeholder(output_path: str, w: int, h: int) -> None:
-    _run([
+    await _run_async([
         "ffmpeg", "-y",
         "-f", "lavfi", "-i", f"color=c=black:size={w}x{h}:duration=3:rate=25",
         "-c:v", "libx264", output_path,
@@ -256,7 +261,7 @@ def _srt_time(seconds: float) -> str:
 
 async def convert_aspect_ratio(input_path: str, output_path: str, aspect_ratio: str) -> bool:
     w, h = DIMENSIONS.get(aspect_ratio, (1920, 1080))
-    ok, _ = _run([
+    ok, _ = await _run_async([
         "ffmpeg", "-y", "-i", input_path,
         "-vf", _scale_filter(w, h),
         "-c:v", "libx264", "-preset", "fast", "-crf", "21",

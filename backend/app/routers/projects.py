@@ -20,7 +20,7 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 async def _load_project(project_id: str, db: AsyncSession) -> Project:
     result = await db.execute(
         select(Project)
-        .options(selectinload(Project.scenes))
+        .options(selectinload(Project.scenes), selectinload(Project.channel))
         .where(Project.id == project_id)
     )
     project = result.scalar_one_or_none()

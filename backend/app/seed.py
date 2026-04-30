@@ -1,10 +1,8 @@
 """
-Database seed script.
-Run once after first migration: python -m app.seed
-Seeds the 5 channels defined in the V1 spec.
+Database seed script — idempotent channel seeding using fixed UUIDs.
+Fixed UUIDs ensure channels are not duplicated on process restart.
 """
 import asyncio
-import uuid
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal, create_tables
@@ -12,9 +10,10 @@ from app.models.channel import Channel, ChannelHook, ChannelCTA
 
 logger = logging.getLogger(__name__)
 
+# Fixed UUIDs — must never change or channels will be duplicated on restart
 CHANNELS = [
     {
-        "id": str(uuid.uuid4()),
+        "id": "a1b2c3d4-e5f6-4789-8abc-def012345678",
         "name": "CurioBuzz",
         "niche": "curiobuzz",
         "language": "en",
@@ -36,7 +35,7 @@ CHANNELS = [
         ],
     },
     {
-        "id": str(uuid.uuid4()),
+        "id": "b2c3d4e5-f6a7-4890-9bcd-ef0123456789",
         "name": "Islamic Wisdom EN",
         "niche": "islamic",
         "language": "en",
@@ -58,7 +57,7 @@ CHANNELS = [
         ],
     },
     {
-        "id": str(uuid.uuid4()),
+        "id": "c3d4e5f6-a7b8-4901-acde-f01234567890",
         "name": "الحكمة الإسلامية",
         "niche": "islamic",
         "language": "ar",
@@ -80,7 +79,7 @@ CHANNELS = [
         ],
     },
     {
-        "id": str(uuid.uuid4()),
+        "id": "d4e5f6a7-b8c9-4012-bdde-012345678901",
         "name": "İslami Hikmet TR",
         "niche": "islamic",
         "language": "tr",
@@ -101,7 +100,7 @@ CHANNELS = [
         ],
     },
     {
-        "id": str(uuid.uuid4()),
+        "id": "e5f6a7b8-c9d0-4123-cee0-123456789012",
         "name": "WealthMind",
         "niche": "finance",
         "language": "en",
@@ -127,15 +126,16 @@ CHANNELS = [
 
 async def seed_channels(db: AsyncSession):
     for ch_data in CHANNELS:
-        hooks = ch_data.pop("hooks", [])
-        ctas = ch_data.pop("ctas", [])
+        hooks = ch_data.get("hooks", [])
+        ctas = ch_data.get("ctas", [])
 
         existing = await db.get(Channel, ch_data["id"])
         if existing:
             logger.info(f"Channel '{ch_data['name']}' already exists, skipping.")
             continue
 
-        channel = Channel(**ch_data)
+        channel_fields = {k: v for k, v in ch_data.items() if k not in ("hooks", "ctas")}
+        channel = Channel(**channel_fields)
         db.add(channel)
         await db.flush()
 

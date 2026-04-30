@@ -8,6 +8,13 @@ from app.database import get_db
 from app.models.project import Project
 from app.models.channel import Channel
 from app.services.thumbnail import generate_thumbnail
+from app.config import settings
+
+
+def _static_to_fs(url: Optional[str]) -> Optional[str]:
+    if url and url.startswith("/static/"):
+        return os.path.join(settings.UPLOAD_DIR, url[len("/static/"):])
+    return url
 
 router = APIRouter(prefix="/thumbnails", tags=["thumbnails"])
 
@@ -25,9 +32,9 @@ async def generate_project_thumbnail(req: ThumbnailRequest, db: AsyncSession = D
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    channel = await db.get(Channel, project.channel_id)
+    channel = await db.get(Channel, project.channel_id) if project.channel_id else None
     primary_color = channel.primary_color if channel else "#0ea5e9"
-    logo_path = channel.logo_url if channel else None
+    logo_path = _static_to_fs(channel.logo_url if channel else None)
 
     prompt = req.custom_prompt or project.thumbnail_prompt or f"cinematic {project.title}"
 

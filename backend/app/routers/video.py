@@ -14,6 +14,13 @@ from app.services.audio_assembler import generate_scene_timings
 from app.services.n8n_service import notify_video_ready
 from app.config import settings
 
+
+def _static_to_fs(url: Optional[str]) -> Optional[str]:
+    """Convert a /static/... URL path to its real filesystem path."""
+    if url and url.startswith("/static/"):
+        return os.path.join(settings.UPLOAD_DIR, url[len("/static/"):])
+    return url
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/video", tags=["video"])
 
@@ -77,11 +84,11 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 audio_path=project.audio_url or "",
                 output_path=output_path,
                 aspect_ratio=aspect_ratio,
-                intro_path=channel.intro_url if channel else None,
-                outro_path=channel.outro_url if channel else None,
-                bg_music_path=channel.bg_music_url if channel else None,
+                intro_path=_static_to_fs(channel.intro_url if channel else None),
+                outro_path=_static_to_fs(channel.outro_url if channel else None),
+                bg_music_path=_static_to_fs(channel.bg_music_url if channel else None),
                 subtitle_config=subtitle_config,
-                logo_path=channel.logo_url if channel else None,
+                logo_path=_static_to_fs(channel.logo_url if channel else None),
                 logo_position=project.template_config.get("logo_position", "top-right"),
             )
 

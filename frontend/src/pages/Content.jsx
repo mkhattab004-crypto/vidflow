@@ -163,7 +163,7 @@ export default function Content() {
 
       {project?.scenes?.length > 0 && (
         <div className="mt-6 flex justify-end">
-          <button className="btn-primary" onClick={() => { updateProject(activeProjectId, { status: 'content_generated', review1_approved: true }); navigate('/visuals') }}>
+          <button className="btn-primary" onClick={async () => { await updateProject(activeProjectId, { review1_approved: true }); navigate('/visuals') }}>
             Approve & Go to Visuals <ArrowRight size={16} />
           </button>
         </div>
