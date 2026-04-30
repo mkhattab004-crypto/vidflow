@@ -43,6 +43,18 @@ async def lifespan(app: FastAPI):
 
     try:
         await create_tables()
+        # Add new columns to existing tables (idempotent — IF NOT EXISTS)
+        from sqlalchemy import text
+        async with engine.begin() as conn:
+            for stmt in [
+                "ALTER TABLE projects ADD COLUMN IF NOT EXISTS niche VARCHAR(100)",
+                "ALTER TABLE projects ADD COLUMN IF NOT EXISTS language VARCHAR(10)",
+                "ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_islamic BOOLEAN DEFAULT FALSE",
+            ]:
+                try:
+                    await conn.execute(text(stmt))
+                except Exception as col_err:
+                    logger.debug(f"Column migration skipped: {col_err}")
         logger.info("Database tables ready")
         from app.seed import seed_channels
         async with AsyncSessionLocal() as db:
