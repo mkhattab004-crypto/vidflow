@@ -52,6 +52,7 @@ export const deleteCTA  = (cid, ctid) => api.delete(`/channels/${cid}/ctas/${cti
 // ── Ideas ─────────────────────────────────────────────────────────────────────
 
 export const suggestIdeas    = (data)  => api.post('/ideas/suggest', data).then(toArr)
+export const quickGenerate   = (data)  => api.post('/projects/quick-generate', data).then(r => r.data)
 export const checkDuplicate  = (data)  => api.post('/ideas/check-duplicate', data).then(r => r.data)
 export const getVideoTypes   = ()      => api.get('/ideas/video-types').then(toArr)
 

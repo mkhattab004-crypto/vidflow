@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
-from app.models.channel import Channel
 from app.models.project import Project
 from app.schemas.project import IdeaRequest, IdeaSuggestion, DuplicateCheckRequest, DuplicateCheckResult
 from app.services import gemini
@@ -12,13 +11,10 @@ router = APIRouter(prefix="/ideas", tags=["ideas"])
 
 @router.post("/suggest", response_model=list[IdeaSuggestion])
 async def suggest_ideas(data: IdeaRequest, db: AsyncSession = Depends(get_db)):
-    channel = await db.get(Channel, data.channel_id)
-    if not channel:
-        raise HTTPException(status_code=404, detail="Channel not found")
     ideas = await gemini.generate_ideas(
-        niche=channel.niche,
-        language=channel.language,
-        tone=channel.script_tone,
+        niche=data.niche,
+        language=data.language,
+        tone=data.tone,
         count=data.count,
     )
     return ideas
@@ -26,12 +22,10 @@ async def suggest_ideas(data: IdeaRequest, db: AsyncSession = Depends(get_db)):
 
 @router.post("/check-duplicate", response_model=DuplicateCheckResult)
 async def check_duplicate(data: DuplicateCheckRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Project.id, Project.title)
-        .where(Project.channel_id == data.channel_id)
-        .order_by(Project.created_at.desc())
-        .limit(100)
-    )
+    q = select(Project.id, Project.title).order_by(Project.created_at.desc()).limit(100)
+    if data.channel_id:
+        q = q.where(Project.channel_id == data.channel_id)
+    result = await db.execute(q)
     existing = result.all()
     titles = [r.title for r in existing]
 

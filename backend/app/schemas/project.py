@@ -35,12 +35,22 @@ class SceneUpdate(BaseModel):
 
 
 class ProjectCreate(BaseModel):
-    channel_id: str
+    channel_id: Optional[str] = None
     title: str
     idea: Optional[str] = None
     video_type: str = "explainer"
     aspect_ratio: str = "16:9"
     template_config: dict = {}
+
+
+class QuickGenerateRequest(BaseModel):
+    title: str
+    niche: str = "educational"
+    language: str = "en"
+    tone: str = "educational"
+    is_islamic: bool = False
+    video_type: str = "explainer"
+    aspect_ratio: str = "16:9"
 
 
 class ProjectUpdate(BaseModel):
@@ -69,7 +79,7 @@ class ProjectUpdate(BaseModel):
 
 class ProjectOut(BaseModel):
     id: str
-    channel_id: str
+    channel_id: Optional[str] = None
     title: str
     idea: Optional[str] = None
     video_type: str
@@ -102,7 +112,7 @@ class ProjectOut(BaseModel):
 
 class ProjectList(BaseModel):
     id: str
-    channel_id: str
+    channel_id: Optional[str] = None
     title: str
     video_type: str
     status: str
@@ -112,7 +122,9 @@ class ProjectList(BaseModel):
 
 
 class IdeaRequest(BaseModel):
-    channel_id: str
+    niche: str = "educational"
+    language: str = "en"
+    tone: str = "educational"
     count: int = 5
 
 
@@ -134,7 +146,7 @@ class ContentGenerateRequest(BaseModel):
 
 
 class DuplicateCheckRequest(BaseModel):
-    channel_id: str
+    channel_id: Optional[str] = None
     idea: str
 
 

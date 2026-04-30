@@ -8,7 +8,7 @@ from app.models.project import Project, Scene
 from app.models.channel import Channel
 from app.schemas.project import (
     ProjectCreate, ProjectUpdate, ProjectOut, ProjectList,
-    SceneUpdate, ContentGenerateRequest
+    SceneUpdate, ContentGenerateRequest, QuickGenerateRequest
 )
 from app.services import gemini
 
@@ -44,11 +44,62 @@ async def list_projects(
     return result.scalars().all()
 
 
+@router.post("/quick-generate", response_model=ProjectOut, status_code=201)
+async def quick_generate(data: QuickGenerateRequest, db: AsyncSession = Depends(get_db)):
+    """Create a project and generate its full script in one shot — no channel required."""
+    project = Project(
+        channel_id=None,
+        title=data.title,
+        idea=data.title,
+        video_type=data.video_type,
+        aspect_ratio=data.aspect_ratio,
+        status="idea",
+    )
+    db.add(project)
+    await db.flush()
+
+    content = await gemini.generate_script(
+        idea=data.title,
+        video_type=data.video_type,
+        language=data.language,
+        tone=data.tone,
+        niche=data.niche,
+        channel_name="VidFlow",
+        is_islamic=data.is_islamic,
+    )
+
+    project.title = content.get("title", data.title)
+    project.description = content.get("description", "")
+    project.pinned_comment = content.get("pinned_comment", "")
+    project.thumbnail_prompt = content.get("thumbnail_prompt", "")
+    project.metadata_tags = content.get("tags", [])
+    project.sharia_reference = content.get("sharia_reference")
+    project.trust_level = content.get("trust_level")
+    project.status = "content_generated"
+
+    for scene_data in content.get("scenes", []):
+        db.add(Scene(
+            project_id=project.id,
+            order=scene_data.get("order", 0),
+            script_text=scene_data.get("script_text", ""),
+            script_ar=scene_data.get("script_ar"),
+            duration=scene_data.get("duration", 5),
+            visual_query=scene_data.get("visual_query", ""),
+            visual_type=scene_data.get("visual_type", "stock"),
+            transition=scene_data.get("transition", "fade"),
+            effects=scene_data.get("effects", []),
+        ))
+
+    await db.commit()
+    return await _load_project(project.id, db)
+
+
 @router.post("", response_model=ProjectOut, status_code=201)
 async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)):
-    channel = await db.get(Channel, data.channel_id)
-    if not channel:
-        raise HTTPException(status_code=404, detail="Channel not found")
+    if data.channel_id:
+        channel = await db.get(Channel, data.channel_id)
+        if not channel:
+            raise HTTPException(status_code=404, detail="Channel not found")
     project = Project(**data.model_dump())
     db.add(project)
     await db.commit()
@@ -82,18 +133,16 @@ async def delete_project(project_id: str, db: AsyncSession = Depends(get_db)):
 @router.post("/{project_id}/generate-content", response_model=ProjectOut)
 async def generate_content(project_id: str, db: AsyncSession = Depends(get_db)):
     project = await _load_project(project_id, db)
-    channel = await db.get(Channel, project.channel_id)
-    if not channel:
-        raise HTTPException(status_code=404, detail="Channel not found")
+    channel = await db.get(Channel, project.channel_id) if project.channel_id else None
 
     content = await gemini.generate_script(
         idea=project.idea or project.title,
         video_type=project.video_type,
-        language=channel.language,
-        tone=channel.script_tone,
-        niche=channel.niche,
-        channel_name=channel.name,
-        is_islamic=channel.is_islamic,
+        language=channel.language if channel else "en",
+        tone=channel.script_tone if channel else "educational",
+        niche=channel.niche if channel else "educational",
+        channel_name=channel.name if channel else "VidFlow",
+        is_islamic=channel.is_islamic if channel else False,
     )
 
     project.title = content.get("title", project.title)
