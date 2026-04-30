@@ -53,6 +53,9 @@ async def quick_generate(data: QuickGenerateRequest, db: AsyncSession = Depends(
         idea=data.title,
         video_type=data.video_type,
         aspect_ratio=data.aspect_ratio,
+        niche=data.niche,
+        language=data.language,
+        is_islamic=data.is_islamic,
         status="idea",
     )
     db.add(project)
@@ -138,11 +141,11 @@ async def generate_content(project_id: str, db: AsyncSession = Depends(get_db)):
     content = await gemini.generate_script(
         idea=project.idea or project.title,
         video_type=project.video_type,
-        language=channel.language if channel else "en",
+        language=channel.language if channel else (project.language or "en"),
         tone=channel.script_tone if channel else "educational",
-        niche=channel.niche if channel else "educational",
+        niche=channel.niche if channel else (project.niche or "educational"),
         channel_name=channel.name if channel else "VidFlow",
-        is_islamic=channel.is_islamic if channel else False,
+        is_islamic=channel.is_islamic if channel else (project.is_islamic or False),
     )
 
     project.title = content.get("title", project.title)

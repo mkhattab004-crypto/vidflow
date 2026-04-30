@@ -82,6 +82,9 @@ class ProjectUpdate(BaseModel):
     review_notes: Optional[str] = None
     aspect_ratio: Optional[str] = None
     template_config: Optional[dict] = None
+    niche: Optional[str] = None
+    language: Optional[str] = None
+    is_islamic: Optional[bool] = None
     voice_id: Optional[str] = None
     audio_speed: Optional[float] = None
     audio_url: Optional[str] = None
@@ -95,6 +98,9 @@ class ProjectOut(BaseModel):
     idea: Optional[str] = None
     video_type: str
     status: str
+    niche: Optional[str] = None
+    language: str = "en"
+    is_islamic: bool = False
     script: dict = {}
     description: Optional[str] = None
     pinned_comment: Optional[str] = None

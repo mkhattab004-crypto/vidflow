@@ -20,7 +20,8 @@ export default function Audio() {
   const { data: project } = useQuery({ queryKey: ['project', activeProjectId], queryFn: () => getProject(activeProjectId), enabled: !!activeProjectId })
   const { data: voices = [] } = useQuery({ queryKey: ['voices'], queryFn: () => getVoices() })
 
-  const channelLanguage = project?.channel?.language || 'en'
+  const channelLanguage = project?.language || project?.channel?.language || 'en'
+  const isIslamic = project?.is_islamic || project?.channel?.is_islamic || false
   const filteredVoices = voices.filter((v) => !v.language || v.language === channelLanguage || channelLanguage === 'en')
 
   const genMutation = useMutation({
@@ -52,7 +53,7 @@ export default function Audio() {
 
       <div className="card mb-4">
         <h3 className="section-title flex items-center gap-2"><Mic size={16} /> Voice Selection</h3>
-        {project?.channel?.is_islamic && RECITER_VOICES.length > 0 && (
+        {isIslamic && RECITER_VOICES.length > 0 && (
           <div className="mb-4">
             <label className="label">Quran Reciters</label>
             <div className="grid grid-cols-2 gap-2">

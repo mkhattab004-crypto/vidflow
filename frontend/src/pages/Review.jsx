@@ -56,7 +56,7 @@ export default function Review() {
     onError: (e) => toast.error(e.message),
   })
 
-  const isIslamic = project?.channel?.is_islamic || false
+  const isIslamic = project?.is_islamic || project?.channel?.is_islamic || false
   const r1 = project?.review1_approved
   const r2 = project?.review2_approved
   const r3 = project?.review3_approved

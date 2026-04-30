@@ -1,4 +1,4 @@
-from sqlalchemy import String, Text, JSON, Integer, ForeignKey, Float
+from sqlalchemy import String, Text, JSON, Integer, ForeignKey, Float, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from sqlalchemy import DateTime
@@ -15,6 +15,9 @@ class Project(Base):
     idea: Mapped[str] = mapped_column(Text, nullable=True)
     video_type: Mapped[str] = mapped_column(String(50), default="explainer")
     status: Mapped[str] = mapped_column(String(50), default="idea")
+    niche: Mapped[str] = mapped_column(String(100), nullable=True)
+    language: Mapped[str] = mapped_column(String(10), nullable=True)
+    is_islamic: Mapped[bool] = mapped_column(Boolean, default=False)
     # Content
     script: Mapped[dict] = mapped_column(JSON, default=dict)
     description: Mapped[str] = mapped_column(Text, nullable=True)
