@@ -50,6 +50,7 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE projects ADD COLUMN IF NOT EXISTS niche VARCHAR(100)",
                 "ALTER TABLE projects ADD COLUMN IF NOT EXISTS language VARCHAR(10)",
                 "ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_islamic BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE projects ALTER COLUMN channel_id DROP NOT NULL",
             ]:
                 try:
                     await conn.execute(text(stmt))
