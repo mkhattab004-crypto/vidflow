@@ -47,6 +47,8 @@ async def list_projects(
 @router.post("/quick-generate", response_model=ProjectOut, status_code=201)
 async def quick_generate(data: QuickGenerateRequest, db: AsyncSession = Depends(get_db)):
     """Create a project and generate its full script in one shot — no channel required."""
+    logger.info(f"quick_generate: START title={data.title!r:.60} niche={data.niche} lang={data.language} islamic={data.is_islamic}")
+
     project = Project(
         channel_id=None,
         title=data.title,
@@ -60,6 +62,7 @@ async def quick_generate(data: QuickGenerateRequest, db: AsyncSession = Depends(
     )
     db.add(project)
     await db.flush()
+    logger.info(f"quick_generate: project row created id={project.id}")
 
     content = await gemini.generate_script(
         idea=data.title,
@@ -70,6 +73,7 @@ async def quick_generate(data: QuickGenerateRequest, db: AsyncSession = Depends(
         channel_name="VidFlow",
         is_islamic=data.is_islamic,
     )
+    logger.info(f"quick_generate: gemini returned {len(content.get('scenes', []))} scenes")
 
     project.title = content.get("title", data.title)
     project.description = content.get("description", "")
@@ -94,6 +98,7 @@ async def quick_generate(data: QuickGenerateRequest, db: AsyncSession = Depends(
         ))
 
     await db.commit()
+    logger.info(f"quick_generate: DONE committed project id={project.id} with {len(content.get('scenes', []))} scenes")
     return await _load_project(project.id, db)
 
 

@@ -16,7 +16,12 @@ _MODEL_NAME = "gemini-1.5-flash"
 _MAX_RETRIES = 3
 
 
+_GEMINI_CALL_TIMEOUT = 120  # seconds per Gemini call
+
+
 def _get_model():
+    if not settings.GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY is not configured — set it as an environment variable on Railway")
     genai.configure(api_key=settings.GEMINI_API_KEY)
     return genai.GenerativeModel(_MODEL_NAME)
 
@@ -30,18 +35,30 @@ def _clean_json(text: str) -> str:
 
 async def _generate(prompt: str, attempt: int = 0) -> str:
     """Call Gemini with retry on quota/server errors. Returns '' on final failure."""
+    if not settings.GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY is not set — cannot call Gemini API")
+        return ""
     try:
+        logger.info(f"Gemini call attempt {attempt + 1}/{_MAX_RETRIES + 1} (prompt {len(prompt)} chars)")
         model = _get_model()
-        response = await asyncio.to_thread(model.generate_content, prompt)
-        return response.text
+        response = await asyncio.wait_for(
+            asyncio.to_thread(model.generate_content, prompt),
+            timeout=_GEMINI_CALL_TIMEOUT,
+        )
+        text = response.text
+        logger.info(f"Gemini responded with {len(text)} chars")
+        return text
+    except asyncio.TimeoutError:
+        logger.error(f"Gemini call timed out after {_GEMINI_CALL_TIMEOUT}s")
+        return ""
     except Exception as e:
         err = str(e)
         if attempt < _MAX_RETRIES and ("429" in err or "500" in err or "503" in err):
             wait = 2 ** attempt
-            logger.warning(f"Gemini error ({err}), retrying in {wait}s...")
+            logger.warning(f"Gemini retryable error (attempt {attempt + 1}): {err[:120]} — retrying in {wait}s")
             await asyncio.sleep(wait)
             return await _generate(prompt, attempt + 1)
-        logger.error(f"Gemini failed after {attempt} retries: {e}")
+        logger.error(f"Gemini failed (attempt {attempt + 1}): {e}")
         return ""
 
 
@@ -155,13 +172,22 @@ Scenes must: start with a hook, build narrative, include CTA near end, end with 
 Visual queries must be specific (e.g. "ancient mosque aerial view sunset" not just "mosque").
 Visual note for this niche: {visual_note}"""
 
+    logger.info(f"generate_script: idea={idea!r:.60} type={video_type} lang={language} niche={niche} islamic={is_islamic}")
+
     text = await _generate(prompt)
+
+    if not text:
+        logger.warning("generate_script: Gemini returned empty — using fallback script")
+        return _fallback_script(idea, language)
+
     try:
         data = json.loads(_clean_json(text))
         if "scenes" in data and isinstance(data["scenes"], list):
+            logger.info(f"generate_script: success — {len(data['scenes'])} scenes, title={data.get('title', '')!r:.60}")
             return data
-    except json.JSONDecodeError:
-        logger.warning("Gemini script response was not valid JSON, using fallback")
+        logger.warning(f"generate_script: Gemini JSON missing 'scenes' key — using fallback. Keys: {list(data.keys())}")
+    except json.JSONDecodeError as exc:
+        logger.warning(f"generate_script: Gemini response not valid JSON ({exc}) — using fallback. First 200 chars: {text[:200]!r}")
 
     return _fallback_script(idea, language)
 
