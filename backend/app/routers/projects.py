@@ -43,7 +43,7 @@ async def list_projects(
     result = await db.execute(q)
     return result.scalars().all()
 
-
+@router.post("/quick-generate/", response_model=ProjectOut, status_code=201, include_in_schema=False)
 @router.post("/quick-generate", response_model=ProjectOut, status_code=201)
 async def quick_generate(data: QuickGenerateRequest, db: AsyncSession = Depends(get_db)):
     """Create a project and generate its full script in one shot — no channel required."""
