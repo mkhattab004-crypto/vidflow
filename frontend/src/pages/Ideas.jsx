@@ -53,14 +53,33 @@ export default function Ideas() {
   })
 
   const generateMutation = useMutation({
-    mutationFn: () => quickGenerate({ title, niche, language, tone, is_islamic: isIslamic, video_type: videoType }),
-    onSuccess: (project) => {
-      setActiveProjectId(project.id)
-      toast.success('Script generated!')
-      navigate('/content')
-    },
-    onError: (e) => toast.error(e.message),
-  })
+  mutationFn: async () => {
+    const project = await quickGenerate({
+      title: title.trim(),
+      niche,
+      language,
+      tone,
+      is_islamic: isIslamic,
+      video_type: videoType,
+      aspect_ratio: '9:16',
+    })
+
+    return project
+  },
+  onSuccess: (project) => {
+    console.log('quickGenerate project:', project)
+
+    if (!project?.id) {
+      toast.error('Project was created but no ID was returned')
+      return
+    }
+
+    setActiveProjectId(project.id)
+    toast.success('Script generated!')
+    navigate('/content')
+  },
+  onError: (e) => toast.error(e.message),
+})
 
   return (
     <div className="max-w-3xl">
