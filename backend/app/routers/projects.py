@@ -113,7 +113,12 @@ async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)
     await db.commit()
     return await _load_project(project.id, db)
 
-
+@router.get("/quick-generate")
+async def quick_generate_get_blocker():
+    raise HTTPException(
+        status_code=405,
+        detail="quick-generate must be called with POST, not GET"
+    )
 @router.get("/{project_id}", response_model=ProjectOut)
 async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
     return await _load_project(project_id, db)
