@@ -18,7 +18,21 @@ async def suggest_ideas(data: IdeaRequest, db: AsyncSession = Depends(get_db)):
         count=data.count,
     )
     return ideas
-
+@router.get("/suggest", response_model=list[IdeaSuggestion])
+async def suggest_ideas_get(
+    niche: str = "educational",
+    language: str = "en",
+    tone: str = "educational",
+    count: int = 5,
+    db: AsyncSession = Depends(get_db),
+):
+    ideas = await gemini.generate_ideas(
+        niche=niche,
+        language=language,
+        tone=tone,
+        count=count,
+    )
+    return ideas
 
 @router.post("/check-duplicate", response_model=DuplicateCheckResult)
 async def check_duplicate(data: DuplicateCheckRequest, db: AsyncSession = Depends(get_db)):
