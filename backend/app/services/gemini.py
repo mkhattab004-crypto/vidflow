@@ -1,6 +1,6 @@
 """
 Gemini AI service — script generation, idea suggestion, duplicate detection.
-Uses gemini-1.5-flash (free tier). Includes exponential-backoff retry.
+Uses gemini-2.5-flash. Includes exponential-backoff retry.
 """
 import json
 import re
