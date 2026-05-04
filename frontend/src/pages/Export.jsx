@@ -1,8 +1,8 @@
 import React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { Download, FileText, Subtitles, FileJson, Video, Monitor, Smartphone, Square } from 'lucide-react'
-import { getProjects, getProject } from '../services/api'
+import { getProjects, getProject, renderAllFormats } from '../services/api'
 import useStore from '../store/useStore'
 import api from '../services/api'
 
@@ -17,9 +17,20 @@ function downloadBlob(blob, filename) {
 
 export default function Export() {
   const { activeProjectId, setActiveProjectId } = useStore()
+  const qc = useQueryClient()
   const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: () => getProjects() })
   const { data: project } = useQuery({ queryKey: ['project', activeProjectId], queryFn: () => getProject(activeProjectId), enabled: !!activeProjectId })
-
+const renderMutation = useMutation({
+  mutationFn: () => renderAllFormats({
+    project_id: activeProjectId,
+    formats: ['16:9', '9:16', '1:1'],
+  }),
+  onSuccess: () => {
+    toast.success('Video rendering started! Refresh after a minute.')
+    qc.invalidateQueries({ queryKey: ['project', activeProjectId] })
+  },
+  onError: (e) => toast.error(e.message),
+})
   async function handleDownload(type) {
     if (!activeProjectId) return
     try {
@@ -71,7 +82,29 @@ export default function Export() {
           <p className="text-sm text-yellow-300">⚠️ All 3 reviews must be approved before exporting the video. Text files are always available.</p>
         </div>
       )}
+<div className="card mb-4">
+  <h3 className="section-title flex items-center gap-2">
+    <Video size={16} /> Render Video
+  </h3>
 
+  <p className="text-sm text-slate-400 mb-3">
+    Generate final video files for YouTube, TikTok/Reels, and Instagram.
+  </p>
+
+  <button
+    className="btn-primary w-full"
+    disabled={!allApproved || renderMutation.isPending}
+    onClick={() => renderMutation.mutate()}
+  >
+    {renderMutation.isPending ? 'Rendering video...' : 'Render All Video Formats'}
+  </button>
+
+  {!allApproved && (
+    <p className="text-xs text-yellow-300 mt-2">
+      All reviews must be approved before rendering.
+    </p>
+  )}
+</div>
       {/* Video Downloads */}
       <div className="card mb-4">
         <h3 className="section-title flex items-center gap-2"><Video size={16} /> Video Files (1080p HD)</h3>
