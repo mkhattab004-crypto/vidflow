@@ -116,77 +116,75 @@ async def assign_visual(
 
 @router.post("/auto-fill/{project_id}")
 async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Scene).where(Scene.project_id == project_id, Scene.visual_status == "pending")
-    )
-    scenes = result.scalars().all()
+result = await db.execute(
+select(Scene).where(Scene.project_id == project_id, Scene.visual_status == "pending")
+)
+scenes = result.scalars().all()
 
-    filled = 0
-    failed = 0
+filled = 0
+failed = 0
 
-    for scene in scenes:
-        if not scene.visual_query:
-            scene.visual_status = "missing_query"
-            failed += 1
-            continue
+for scene in scenes:
+if not scene.visual_query:
+scene.visual_status = "missing_query"
+failed += 1
+continue
 
-        videos = await pexels.search_videos(scene.visual_query, per_page=3)
+videos = await pexels.search_videos(scene.visual_query, per_page=3)
 
-        if not videos:
-            videos = await pixabay.search_videos(scene.visual_query, per_page=3)
+if not videos:
+videos = await pixabay.search_videos(scene.visual_query, per_page=3)
 
-        if not videos:
-            scene.visual_status = "needs_ai"
-            failed += 1
-            continue
+if not videos:
+scene.visual_status = "needs_ai"
+failed += 1
+continue
 
-       downloaded_paths = []
+downloaded_paths = []
 selected_sources = []
 selected_attributions = []
 
 for candidate in videos:
-    candidate_url = candidate.get("url")
-    candidate_source = candidate.get("source", "unknown")
+candidate_url = candidate.get("url")
+candidate_source = candidate.get("source", "unknown")
 
-    local_path = await download_visual_asset(
-        url=candidate_url,
-        project_id=project_id,
-        scene_order=scene.order,
-        source=candidate_source,
-    )
+local_path = await download_visual_asset(
+url=candidate_url,
+project_id=project_id,
+scene_order=scene.order,
+source=candidate_source,
+)
 
-    if local_path:
-        downloaded_paths.append(local_path)
-        selected_sources.append(candidate_source)
+if local_path:
+downloaded_paths.append(local_path)
+selected_sources.append(candidate_source)
 
-        if candidate.get("attribution"):
-            selected_attributions.append(candidate.get("attribution"))
+if candidate.get("attribution"):
+selected_attributions.append(candidate.get("attribution"))
 
-    if len(downloaded_paths) >= 3:
-        break
+if len(downloaded_paths) >= 3:
+ break
 
 if downloaded_paths:
-    scene.visual_url = downloaded_paths[0]
-    scene.visual_source = selected_sources[0] if selected_sources else "stock"
-    scene.visual_status = "suggested"
+ scene.visual_url = downloaded_paths[0]
+ scene.visual_source = selected_sources[0] if selected_sources else "stock"
+ scene.visual_status = "suggested"
 
-    if selected_attributions:
-        scene.on_screen_source = selected_attributions[0]
+if selected_attributions:
+scene.on_screen_source = selected_attributions[0]
 
-    filled += 1
-else:
-    scene.visual_status = "download_failed"
-    failed += 1
-       
-    await db.commit()
+filled += 1
+ else:
+ scene.visual_status = "download_failed"
+failed += 1
 
-    return {
-        "filled": filled,
-        "failed": failed,
-        "total": len(scenes),
+ await db.commit()
+
+ return {
+  "filled": filled,
+     "failed": failed,
+   "total": len(scenes),
     }
-
-
 @router.get("/gap-analysis/{project_id}")
 async def visual_gap_analysis(project_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Scene).where(Scene.project_id == project_id))
