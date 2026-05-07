@@ -49,7 +49,7 @@ const renderMutation = useMutation({
         filename = `captions.txt`
       } else if (type.startsWith('video_')) {
         const fmt = type.replace('video_', '').replace('x', ':')
-        window.open(`/api/video/download/${activeProjectId}?format=${fmt}`, '_blank')
+       window.open(`https://vidflow-production-727a.up.railway.app/api/video/download/${activeProjectId}?format=${fmt}`, '_blank')
         return
       }
       if (res) downloadBlob(res.data, filename)
