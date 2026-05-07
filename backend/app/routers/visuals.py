@@ -177,10 +177,7 @@ if downloaded_paths:
 else:
     scene.visual_status = "download_failed"
     failed += 1
-        else:
-            scene.visual_status = "download_failed"
-            failed += 1
-
+       
     await db.commit()
 
     return {
