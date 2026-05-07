@@ -62,39 +62,85 @@ async def compose_video(
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     w, h = DIMENSIONS.get(aspect_ratio, (1920, 1080))
 
-    # 1. Build ordered list of video clips with their target durations
+        # 1. Build ordered list of video clips with their target durations
     clips = []
     clip_durations = []
+
     if intro_path and os.path.exists(intro_path):
         clips.append(intro_path)
-        clip_durations.append(999)
+        clip_durations.append(5)
+
     for scene in scenes:
         vurl = scene.get("visual_url", "")
-        if vurl and os.path.exists(vurl):
-            clips.append(vurl)
-            clip_durations.append(scene.get("duration", 10))
+        scene_duration = float(scene.get("duration", 10) or 10)
+
+        if not vurl or not os.path.exists(vurl):
+            continue
+
+        scene_clips = []
+
+        folder = os.path.dirname(vurl)
+        filename = os.path.basename(vurl)
+
+        # Expected filename pattern:
+        # scene_001_pexels_12345.mp4
+        parts = filename.split("_")
+        if len(parts) >= 2:
+            scene_prefix = f"{parts[0]}_{parts[1]}_"
+
+            try:
+                scene_clips = [
+                    os.path.join(folder, f)
+                    for f in sorted(os.listdir(folder))
+                    if f.startswith(scene_prefix)
+                    and f.lower().endswith((".mp4", ".mov", ".webm"))
+                    and os.path.exists(os.path.join(folder, f))
+                ]
+            except Exception as e:
+                logger.warning(f"Could not list scene visual files for {vurl}: {e}")
+
+        if not scene_clips:
+            scene_clips = [vurl]
+
+        per_clip_duration = max(scene_duration / max(len(scene_clips), 1), 2)
+
+        for clip in scene_clips:
+            clips.append(clip)
+            clip_durations.append(per_clip_duration)
+
     if outro_path and os.path.exists(outro_path):
         clips.append(outro_path)
-        clip_durations.append(999)
-
+        clip_durations.append(5)
     if not clips:
         logger.warning("No video clips available — creating placeholder")
         await _create_placeholder(output_path, w, h)
         return True
 
-    # 2. Normalize each clip to the target resolution
+      # 2. Normalize each clip to the target resolution
     normalized = []
     for i, clip in enumerate(clips):
         norm = output_path + f"_norm_{i}.mp4"
-        ok, _ = await _run_async([
-            "ffmpeg", "-y", "-i", clip,
+        duration = max(float(clip_durations[i] or 5), 2)
+
+        ok, err = await _run_async([
+            "ffmpeg", "-y",
+            "-i", clip,
+            "-t", str(duration),
             "-vf", _scale_filter(w, h),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-            "-an", "-t", str(clip_durations[i]),
+            "-r", "30",
+            "-an",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "22",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
             norm,
         ])
-        if ok:
+
+        if ok and os.path.exists(norm) and os.path.getsize(norm) > 50000:
             normalized.append(norm)
+        else:
+            logger.error(f"Failed to normalize clip {clip}: {err[-300:]}")
 
     if not normalized:
         await _create_placeholder(output_path, w, h)
@@ -160,16 +206,27 @@ async def compose_video(
         a_idx = inputs.index(audio_path) // 2
         audio_map = ["-map", f"{a_idx}:a"]
 
-    cmd = ["ffmpeg", "-y"] + inputs
+        cmd = ["ffmpeg", "-y"] + inputs
+
     if filter_parts:
         cmd += ["-filter_complex", ";".join(filter_parts)]
         cmd += ["-map", video_stream]
     else:
         cmd += ["-map", "0:v"]
+
     cmd += audio_map
-    cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "21"]
+
+    cmd += [
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "21",
+        "-pix_fmt", "yuv420p",
+        "-r", "30",
+    ]
+
     if audio_ok or bg_ok:
-        cmd += ["-c:a", "aac", "-b:a", "192k"]
+        cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
+
     cmd += ["-movflags", "+faststart", output_path]
 
     ok, err = await _run_async(cmd)
@@ -183,8 +240,13 @@ async def compose_video(
 
     if not ok:
         logger.error(f"Final composition failed: {err[-300:]}")
-    return ok
+        return False
 
+    if not os.path.exists(output_path) or os.path.getsize(output_path) < 50000:
+        logger.error(f"Final video file missing or too small: {output_path}")
+        return False
+
+    return True
 
 def _logo_overlay_pos(position: str, w: int, h: int) -> str:
     pad = 20
