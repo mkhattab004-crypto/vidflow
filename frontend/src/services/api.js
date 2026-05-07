@@ -3,7 +3,7 @@ import axios from 'axios'
 // VITE_API_URL can be set as a Railway build-time env var to call the backend
 // directly (e.g. https://vidflow-production-727a.up.railway.app/api).
 // Falls back to /api which is handled by the nginx proxy.
-const BASE_URL = import.meta.env.VITE_API_URL || '/api'
+const BASE_URL = 'https://vidflow-production-727a.up.railway.app/api'
 
 const api = axios.create({
   baseURL: BASE_URL,
