@@ -41,7 +41,7 @@ async def download_visual_asset(url: str, project_id: str, scene_order: int, sou
     if ext not in [".mp4", ".mov", ".webm", ".jpg", ".jpeg", ".png"]:
         ext = ".mp4"
 
-    filename = f"scene_{int(scene_order):03d}_{_safe_name(source)}{ext}"
+    filename = f"scene_{int(scene_order):03d}_{_safe_name(source)}_{abs(hash(url)) % 100000}{ext}"
     local_path = os.path.join(project_dir, filename)
 
     try:
@@ -140,33 +140,43 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
             failed += 1
             continue
 
-        selected = None
-        local_path = None
+       downloaded_paths = []
+selected_sources = []
+selected_attributions = []
 
-        for candidate in videos:
-            candidate_url = candidate.get("url")
-            candidate_source = candidate.get("source", "unknown")
+for candidate in videos:
+    candidate_url = candidate.get("url")
+    candidate_source = candidate.get("source", "unknown")
 
-            local_path = await download_visual_asset(
-                url=candidate_url,
-                project_id=project_id,
-                scene_order=scene.order,
-                source=candidate_source,
-            )
+    local_path = await download_visual_asset(
+        url=candidate_url,
+        project_id=project_id,
+        scene_order=scene.order,
+        source=candidate_source,
+    )
 
-            if local_path:
-                selected = candidate
-                break
+    if local_path:
+        downloaded_paths.append(local_path)
+        selected_sources.append(candidate_source)
 
-        if selected and local_path:
-            scene.visual_url = local_path
-            scene.visual_source = selected.get("source", "stock")
-            scene.visual_status = "suggested"
+        if candidate.get("attribution"):
+            selected_attributions.append(candidate.get("attribution"))
 
-            if selected.get("attribution"):
-                scene.on_screen_source = selected.get("attribution")
+    if len(downloaded_paths) >= 3:
+        break
 
-            filled += 1
+if downloaded_paths:
+    scene.visual_url = downloaded_paths[0]
+    scene.visual_source = selected_sources[0] if selected_sources else "stock"
+    scene.visual_status = "suggested"
+
+    if selected_attributions:
+        scene.on_screen_source = selected_attributions[0]
+
+    filled += 1
+else:
+    scene.visual_status = "download_failed"
+    failed += 1
         else:
             scene.visual_status = "download_failed"
             failed += 1
