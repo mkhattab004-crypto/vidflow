@@ -66,7 +66,7 @@ async def download_visual_asset(url: str, project_id: str, scene_order: int, sou
     clean_url = url.split("?")[0]
     ext = os.path.splitext(clean_url)[1].lower()
 
-    if ext not in [".mp4", ".mov", ".webm", ".jpg", ".jpeg", ".png"]:
+    if ext not in [".mp4", ".mov", ".webm", ".jpg", ".jpeg", ".png", ".webp"]:
         ext = ".mp4"
 
     filename = f"scene_{int(scene_order):03d}_{_safe_name(source)}_{abs(hash(url)) % 100000}{ext}"
@@ -157,12 +157,18 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
             failed += 1
             continue
 
-        videos = await pexels.search_videos(scene.visual_query, per_page=3)
+        candidates = await pexels.search_photos(scene.visual_query, per_page=3)
 
-        if not videos:
-            videos = await pixabay.search_videos(scene.visual_query, per_page=3)
+        if not candidates:
+            candidates = await pixabay.search_photos(scene.visual_query, per_page=3)
 
-        if not videos:
+        if not candidates:
+            candidates = await pexels.search_videos(scene.visual_query, per_page=3)
+
+        if not candidates:
+            candidates = await pixabay.search_videos(scene.visual_query, per_page=3)
+
+        if not candidates:
             scene.visual_status = "needs_ai"
             failed += 1
             continue
@@ -171,7 +177,7 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
         selected_sources = []
         selected_attributions = []
 
-        for candidate in videos:
+        for candidate in candidates:
             candidate_url = candidate.get("url")
             candidate_source = candidate.get("source", "unknown")
 

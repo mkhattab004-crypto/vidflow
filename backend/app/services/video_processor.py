@@ -121,7 +121,7 @@ async def compose_video(
                     os.path.join(folder, f)
                     for f in sorted(os.listdir(folder))
                     if f.startswith(scene_prefix)
-                    and f.lower().endswith((".mp4", ".mov", ".webm"))
+                    and f.lower().endswith((".mp4", ".mov", ".webm", ".jpg", ".jpeg", ".png", ".webp"))
                     and os.path.exists(os.path.join(folder, f))
                 ]
             except Exception as e:
@@ -155,9 +155,52 @@ async def compose_video(
 
     # 2. Normalize each clip to the target resolution
     normalized = []
+    image_exts = (".jpg", ".jpeg", ".png", ".webp")
     for i, clip in enumerate(clips):
         norm = output_path + f"_norm_{i}.mp4"
         duration = max(float(clip_durations[i] or 5), MIN_NORMALIZED_DURATION_SECONDS)
+        clip_is_image = clip.lower().endswith(image_exts)
+
+        if clip_is_image:
+            normal_cmd = [
+                "ffmpeg",
+                "-y",
+                "-loop",
+                "1",
+                "-i",
+                clip,
+                "-t",
+                str(duration),
+                "-vf",
+                _scale_filter(w, h),
+                "-r",
+                "30",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "22",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                norm,
+            ]
+            ok, err = await _run_async(normal_cmd)
+
+            if ok and os.path.exists(norm) and os.path.getsize(norm) > MIN_NORMALIZED_CLIP_SIZE_BYTES:
+                normalized.append(norm)
+            else:
+                if os.path.exists(norm):
+                    try:
+                        os.remove(norm)
+                    except OSError:
+                        pass
+                logger.error(f"Image normalization failed for clip {clip}: {err[-300:]}")
+            continue
+
         clip_actual_duration = _probe_duration(clip)
         if clip_actual_duration < MIN_VALID_CLIP_PROBE_SECONDS:
             logger.warning(
