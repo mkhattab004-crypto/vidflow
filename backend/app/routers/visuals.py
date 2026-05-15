@@ -14,6 +14,34 @@ logger = logging.getLogger(__name__)
 
 ASSET_ROOT = "/tmp/vidflow_assets"
 
+def _resolve_local_visual_path(visual_url: str | None) -> str | None:
+    if not visual_url:
+        return None
+
+    if visual_url.startswith("http://") or visual_url.startswith("https://"):
+        return None
+
+    if visual_url.startswith("/static/"):
+        static_relative = visual_url[len("/static/"):].lstrip("/")
+        return os.path.join(ASSET_ROOT, static_relative)
+
+    return visual_url
+
+
+def _needs_visual_refill(scene: Scene) -> bool:
+    if scene.visual_status == "pending":
+        return True
+
+    if scene.visual_status not in {"suggested", "approved", "ok"}:
+        return False
+
+    local_path = _resolve_local_visual_path(scene.visual_url)
+
+    if local_path is None:
+        return not scene.visual_url
+
+    return not os.path.exists(local_path)
+
 
 def _safe_name(value: str) -> str:
     value = value or "asset"
@@ -116,10 +144,9 @@ async def assign_visual(
 
 @router.post("/auto-fill/{project_id}")
 async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Scene).where(Scene.project_id == project_id, Scene.visual_status == "pending")
-    )
-    scenes = result.scalars().all()
+    result = await db.execute(select(Scene).where(Scene.project_id == project_id))
+    all_scenes = result.scalars().all()
+    scenes = [scene for scene in all_scenes if _needs_visual_refill(scene)]
 
     filled = 0
     failed = 0
