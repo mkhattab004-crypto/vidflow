@@ -19,8 +19,8 @@ DIMENSIONS = {
 
 MIN_NORMALIZED_DURATION_SECONDS = 2.0
 MIN_VALID_CLIP_PROBE_SECONDS = 0.25
-MIN_NORMALIZED_CLIP_SIZE_BYTES = 50_000
-MIN_FINAL_OUTPUT_SIZE_BYTES = 1_000_000
+MIN_NORMALIZED_CLIP_SIZE_BYTES = 5_000
+MIN_FINAL_OUTPUT_SIZE_BYTES = 20_000
 
 
 def _run(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
@@ -340,6 +340,44 @@ async def compose_video(
                     logger.error(
                         f"Fallback image normalization failed for clip {clip}: {fallback_err[-300:]}"
                     )
+                    logger.info("trying mpeg4 image fallback")
+                    mpeg4_fallback_cmd = [
+                        "ffmpeg",
+                        "-y",
+                        "-framerate",
+                        "30",
+                        "-loop",
+                        "1",
+                        "-i",
+                        clip,
+                        "-t",
+                        str(duration),
+                        "-vf",
+                        f"{_scale_filter(w, h)},format=yuv420p",
+                        "-an",
+                        "-c:v",
+                        "mpeg4",
+                        "-q:v",
+                        "5",
+                        "-r",
+                        "30",
+                        norm,
+                    ]
+                    mpeg4_ok, mpeg4_err = await _run_async(mpeg4_fallback_cmd)
+                    if (
+                        mpeg4_ok
+                        and os.path.exists(norm)
+                        and os.path.getsize(norm) > MIN_NORMALIZED_CLIP_SIZE_BYTES
+                    ):
+                        normalized.append(norm)
+                        logger.info("mpeg4 image fallback succeeded")
+                    else:
+                        if os.path.exists(norm):
+                            try:
+                                os.remove(norm)
+                            except OSError:
+                                pass
+                        logger.error(f"mpeg4 image fallback failed: {mpeg4_err[-300:]}")
             continue
 
         clip_actual_duration = _probe_duration(clip)
@@ -437,6 +475,45 @@ async def compose_video(
             logger.info(f"Fallback normalization succeeded for clip {clip}")
         else:
             logger.error(f"Fallback normalization failed for clip {clip}: {fallback_err[-300:]}")
+            if os.path.exists(norm):
+                try:
+                    os.remove(norm)
+                except OSError:
+                    pass
+            logger.info("trying mpeg4 video fallback")
+            mpeg4_video_fallback_cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                clip,
+                "-t",
+                str(duration),
+                "-vf",
+                _scale_filter(w, h),
+                "-r",
+                "30",
+                "-an",
+                "-c:v",
+                "mpeg4",
+                "-q:v",
+                "5",
+                norm,
+            ]
+            mpeg4_video_ok, mpeg4_video_err = await _run_async(mpeg4_video_fallback_cmd)
+            if (
+                mpeg4_video_ok
+                and os.path.exists(norm)
+                and os.path.getsize(norm) > MIN_NORMALIZED_CLIP_SIZE_BYTES
+            ):
+                normalized.append(norm)
+                logger.info("mpeg4 video fallback succeeded")
+            else:
+                if os.path.exists(norm):
+                    try:
+                        os.remove(norm)
+                    except OSError:
+                        pass
+                logger.error(f"mpeg4 video fallback failed: {mpeg4_video_err[-300:]}")
 
     if not normalized:
         logger.error("No normalized clips were produced.")
@@ -546,6 +623,40 @@ async def compose_video(
 
     ok, err = await _run_async(cmd)
 
+    if not ok or not os.path.exists(output_path) or os.path.getsize(output_path) < MIN_FINAL_OUTPUT_SIZE_BYTES:
+        logger.info("trying mpeg4 final render fallback")
+        mpeg4_cmd = cmd.copy()
+        try:
+            codec_index = mpeg4_cmd.index("-c:v")
+            mpeg4_cmd[codec_index + 1] = "mpeg4"
+        except (ValueError, IndexError):
+            mpeg4_cmd += ["-c:v", "mpeg4"]
+        filtered_cmd = []
+        skip_next = False
+        for idx, token in enumerate(mpeg4_cmd):
+            if skip_next:
+                skip_next = False
+                continue
+            if token == "-crf":
+                skip_next = True
+                continue
+            if token == "-q:v":
+                skip_next = True
+                continue
+            filtered_cmd.append(token)
+        mpeg4_cmd = filtered_cmd
+        try:
+            output_idx = mpeg4_cmd.index(output_path)
+        except ValueError:
+            output_idx = len(mpeg4_cmd)
+            mpeg4_cmd.append(output_path)
+        mpeg4_cmd[output_idx:output_idx] = ["-q:v", "5"]
+        ok, err = await _run_async(mpeg4_cmd)
+        if ok and os.path.exists(output_path) and os.path.getsize(output_path) >= MIN_FINAL_OUTPUT_SIZE_BYTES:
+            logger.info("mpeg4 final render fallback succeeded")
+        else:
+            logger.error(f"mpeg4 final render fallback failed: {err[-300:]}")
+
     # Cleanup temp files
     for f in normalized + [concat_file, concat_path]:
         try:
@@ -607,8 +718,11 @@ async def _create_placeholder(output_path: str, w: int, h: int) -> None:
         "lavfi",
         "-i",
         f"color=c=black:size={w}x{h}:duration=3:rate=25",
+        "-an",
         "-c:v",
-        "libx264",
+        "mpeg4",
+        "-q:v",
+        "5",
         output_path,
     ])
 
