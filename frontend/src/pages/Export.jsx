@@ -23,7 +23,7 @@ export default function Export() {
 const renderMutation = useMutation({
   mutationFn: () => renderAllFormats({
     project_id: activeProjectId,
-    formats: ['16:9', '9:16', '1:1'],
+    formats: ['16:9'],
   }),
   onSuccess: () => {
     toast.success('Video rendering started! Refresh after a minute.')
