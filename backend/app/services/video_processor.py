@@ -165,6 +165,8 @@ async def compose_video(
             normal_cmd = [
                 "ffmpeg",
                 "-y",
+                "-framerate",
+                "30",
                 "-loop",
                 "1",
                 "-i",
@@ -172,16 +174,14 @@ async def compose_video(
                 "-t",
                 str(duration),
                 "-vf",
-                _scale_filter(w, h),
-                "-r",
-                "30",
+                f"{_scale_filter(w, h)},format=yuv420p",
                 "-an",
                 "-c:v",
                 "libx264",
                 "-preset",
-                "fast",
+                "veryfast",
                 "-crf",
-                "22",
+                "23",
                 "-pix_fmt",
                 "yuv420p",
                 "-movflags",
@@ -199,6 +199,58 @@ async def compose_video(
                     except OSError:
                         pass
                 logger.error(f"Image normalization failed for clip {clip}: {err[-300:]}")
+
+                fallback_cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"color=c=black:s={w}x{h}:r=30:d={duration}",
+                    "-loop",
+                    "1",
+                    "-i",
+                    clip,
+                    "-filter_complex",
+                    (
+                        f"[1:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,format=rgba[img];"
+                        f"[0:v][img]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]"
+                    ),
+                    "-map",
+                    "[v]",
+                    "-t",
+                    str(duration),
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-crf",
+                    "23",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                    norm,
+                ]
+                fallback_ok, fallback_err = await _run_async(fallback_cmd)
+                if (
+                    fallback_ok
+                    and os.path.exists(norm)
+                    and os.path.getsize(norm) > MIN_NORMALIZED_CLIP_SIZE_BYTES
+                ):
+                    normalized.append(norm)
+                    logger.info(f"Fallback image normalization succeeded for clip {clip}")
+                else:
+                    if os.path.exists(norm):
+                        try:
+                            os.remove(norm)
+                        except OSError:
+                            pass
+                    logger.error(
+                        f"Fallback image normalization failed for clip {clip}: {fallback_err[-300:]}"
+                    )
             continue
 
         clip_actual_duration = _probe_duration(clip)
