@@ -540,15 +540,37 @@ async def compose_video(
         "-an",
         concat_path,
     ])
-    if not ok:
-        logger.error("Failed to concatenate normalized clips.")
-        return False
-    if not os.path.exists(concat_path) or os.path.getsize(concat_path) < MIN_FINAL_OUTPUT_SIZE_BYTES:
-        logger.error(
-            f"Concatenated video file missing or too small ({MIN_FINAL_OUTPUT_SIZE_BYTES} bytes min): "
-            f"{concat_path}"
-        )
-        return False
+
+    concat_valid = os.path.exists(concat_path) and os.path.getsize(concat_path) >= MIN_FINAL_OUTPUT_SIZE_BYTES
+    if not ok or not concat_valid:
+        logger.warning("concat copy failed or too small")
+        logger.info("trying mpeg4 concat fallback")
+        mpeg4_concat_cmd = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            concat_file,
+            "-an",
+            "-r",
+            "30",
+            "-c:v",
+            "mpeg4",
+            "-q:v",
+            "5",
+            concat_path,
+        ]
+        mpeg4_concat_ok, _ = await _run_async(mpeg4_concat_cmd)
+        concat_valid = os.path.exists(concat_path) and os.path.getsize(concat_path) >= MIN_FINAL_OUTPUT_SIZE_BYTES
+        if mpeg4_concat_ok and concat_valid:
+            logger.info("mpeg4 concat fallback succeeded")
+            ok = True
+        else:
+            logger.error("mpeg4 concat fallback failed")
+            return False
 
     # 4. Build final command with audio, subtitles, logo
     inputs = ["-i", concat_path]
