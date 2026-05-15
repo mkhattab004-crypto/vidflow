@@ -9,7 +9,12 @@ from pydantic import BaseModel
 from typing import Optional
 from app.database import get_db
 from app.models.project import Project
-from app.services.video_processor import compose_video, convert_aspect_ratio, generate_srt
+from app.services.video_processor import (
+    compose_video,
+    convert_aspect_ratio,
+    generate_srt,
+    render_diagnostic_video,
+)
 from app.services.audio_assembler import generate_scene_timings
 from app.services.n8n_service import notify_video_ready
 from app.config import settings
@@ -188,3 +193,31 @@ async def download_video(project_id: str, format: str = "16:9", db: AsyncSession
     safe_title = "".join(c for c in project.title if c.isalnum() or c in " -_")[:50]
     fmt_name = format.replace(":", "x")
     return FileResponse(path, media_type="video/mp4", filename=f"{safe_title}_{fmt_name}.mp4")
+
+
+@router.get("/diagnostic-render")
+async def diagnostic_render():
+    diagnostics_dir = os.path.join(settings.OUTPUT_DIR, "diagnostics")
+    os.makedirs(diagnostics_dir, exist_ok=True)
+    output_path = os.path.join(diagnostics_dir, "diagnostic_16x9.mp4")
+
+    ok = await render_diagnostic_video(output_path, "16:9")
+    if not ok:
+        raise HTTPException(
+            status_code=500,
+            detail="Diagnostic render failed: backend could not create lavfi MP4",
+        )
+
+    file_size = os.path.getsize(output_path)
+    return {"ok": True, "path": output_path, "size": file_size}
+
+
+@router.get("/diagnostic-download")
+async def diagnostic_download():
+    output_path = os.path.join(settings.OUTPUT_DIR, "diagnostics", "diagnostic_16x9.mp4")
+    if not os.path.exists(output_path):
+        raise HTTPException(
+            status_code=404,
+            detail="Diagnostic video not found — run diagnostic-render first",
+        )
+    return FileResponse(output_path, media_type="video/mp4", filename="diagnostic_16x9.mp4")

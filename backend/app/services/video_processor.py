@@ -41,6 +41,62 @@ async def _run_async(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
     return await asyncio.to_thread(_run, cmd, timeout)
 
 
+async def render_diagnostic_video(output_path: str, aspect_ratio: str = "16:9") -> bool:
+    """Render a self-contained diagnostic MP4 using only FFmpeg lavfi sources."""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    w, h = DIMENSIONS.get(aspect_ratio, DIMENSIONS["16:9"])
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"testsrc=size={w}x{h}:rate=30:duration=5",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=1000:duration=5",
+        "-shortest",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
+        output_path,
+    ]
+
+    ok, err = await _run_async(cmd, timeout=120)
+    if not ok:
+        logger.error(f"Diagnostic render failed for {output_path}: {err[-500:]}")
+        return False
+
+    if not os.path.exists(output_path):
+        logger.error(f"Diagnostic render failed: output file missing at {output_path}")
+        return False
+
+    size = os.path.getsize(output_path)
+    if size <= 100_000:
+        logger.error(
+            f"Diagnostic render failed: output too small ({size} bytes) at {output_path}"
+        )
+        return False
+
+    logger.info(
+        f"Diagnostic render succeeded: {output_path} ({w}x{h}, {size} bytes)"
+    )
+    return True
+
+
 def _probe_duration(path: str) -> float:
     """Read media duration in seconds via ffprobe."""
     try:
