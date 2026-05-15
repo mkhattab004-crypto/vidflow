@@ -17,6 +17,11 @@ DIMENSIONS = {
     "1:1": (1080, 1080),
 }
 
+MIN_NORMALIZED_DURATION_SECONDS = 2.0
+MIN_VALID_CLIP_PROBE_SECONDS = 0.25
+MIN_NORMALIZED_CLIP_SIZE_BYTES = 50_000
+MIN_FINAL_OUTPUT_SIZE_BYTES = 1_000_000
+
 
 def _run(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
     """Run an FFmpeg command synchronously (use _run_async from async contexts)."""
@@ -130,9 +135,12 @@ async def compose_video(
         for idx, clip in enumerate(scene_clips):
             # Keep exact scene timing by distributing rounding remainder to final clip.
             if idx == clip_count - 1:
-                duration = max(scene_duration - (per_clip_duration * (clip_count - 1)), 0.05)
+                duration = max(
+                    scene_duration - (per_clip_duration * (clip_count - 1)),
+                    MIN_NORMALIZED_DURATION_SECONDS,
+                )
             else:
-                duration = max(per_clip_duration, 0.05)
+                duration = max(per_clip_duration, MIN_NORMALIZED_DURATION_SECONDS)
             clips.append(clip)
             clip_durations.append(duration)
 
@@ -149,10 +157,23 @@ async def compose_video(
     normalized = []
     for i, clip in enumerate(clips):
         norm = output_path + f"_norm_{i}.mp4"
-        duration = max(float(clip_durations[i] or 5), 0.05)
+        duration = max(float(clip_durations[i] or 5), MIN_NORMALIZED_DURATION_SECONDS)
         clip_actual_duration = _probe_duration(clip)
+        if clip_actual_duration < MIN_VALID_CLIP_PROBE_SECONDS:
+            logger.warning(
+                f"Skipping clip with invalid/too-short probed duration: {clip} "
+                f"(duration={clip_actual_duration:.3f}s)"
+            )
+            continue
         if clip_actual_duration > 0:
             duration = min(duration, clip_actual_duration)
+
+        if duration < MIN_VALID_CLIP_PROBE_SECONDS:
+            logger.warning(
+                f"Skipping clip due to normalization duration too short: {clip} "
+                f"(target={duration:.3f}s)"
+            )
+            continue
 
         ok, err = await _run_async([
             "ffmpeg",
@@ -179,7 +200,7 @@ async def compose_video(
             norm,
         ])
 
-        if ok and os.path.exists(norm) and os.path.getsize(norm) > 50000:
+        if ok and os.path.exists(norm) and os.path.getsize(norm) > MIN_NORMALIZED_CLIP_SIZE_BYTES:
             normalized.append(norm)
         else:
             logger.error(f"Failed to normalize clip {clip}: {err[-300:]}")
@@ -211,6 +232,12 @@ async def compose_video(
     ])
     if not ok:
         logger.error("Failed to concatenate normalized clips.")
+        return False
+    if not os.path.exists(concat_path) or os.path.getsize(concat_path) < MIN_FINAL_OUTPUT_SIZE_BYTES:
+        logger.error(
+            f"Concatenated video file missing or too small ({MIN_FINAL_OUTPUT_SIZE_BYTES} bytes min): "
+            f"{concat_path}"
+        )
         return False
 
     # 4. Build final command with audio, subtitles, logo
@@ -297,7 +324,7 @@ async def compose_video(
         logger.error(f"Final composition failed: {err[-300:]}")
         return False
 
-    if not os.path.exists(output_path) or os.path.getsize(output_path) < 50000:
+    if not os.path.exists(output_path) or os.path.getsize(output_path) < MIN_FINAL_OUTPUT_SIZE_BYTES:
         logger.error(f"Final video file missing or too small: {output_path}")
         return False
 
