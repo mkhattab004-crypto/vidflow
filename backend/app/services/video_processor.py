@@ -175,7 +175,7 @@ async def compose_video(
             )
             continue
 
-        ok, err = await _run_async([
+        normal_cmd = [
             "ffmpeg",
             "-y",
             "-i",
@@ -198,12 +198,61 @@ async def compose_video(
             "-movflags",
             "+faststart",
             norm,
-        ])
+        ]
+        ok, err = await _run_async(normal_cmd)
 
         if ok and os.path.exists(norm) and os.path.getsize(norm) > MIN_NORMALIZED_CLIP_SIZE_BYTES:
             normalized.append(norm)
+            continue
+
+        if os.path.exists(norm):
+            try:
+                os.remove(norm)
+            except OSError:
+                pass
+
+        logger.warning(f"Normal normalization failed for clip {clip}: {err[-300:]}")
+
+        fallback_cmd = [
+            "ffmpeg",
+            "-y",
+            "-fflags",
+            "+genpts",
+            "-err_detect",
+            "ignore_err",
+            "-avoid_negative_ts",
+            "make_zero",
+            "-i",
+            clip,
+            "-t",
+            str(duration),
+            "-vf",
+            _scale_filter(w, h),
+            "-r",
+            "30",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "22",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            norm,
+        ]
+        fallback_ok, fallback_err = await _run_async(fallback_cmd)
+        if (
+            fallback_ok
+            and os.path.exists(norm)
+            and os.path.getsize(norm) > MIN_NORMALIZED_CLIP_SIZE_BYTES
+        ):
+            normalized.append(norm)
+            logger.info(f"Fallback normalization succeeded for clip {clip}")
         else:
-            logger.error(f"Failed to normalize clip {clip}: {err[-300:]}")
+            logger.error(f"Fallback normalization failed for clip {clip}: {fallback_err[-300:]}")
 
     if not normalized:
         logger.error("No normalized clips were produced.")
