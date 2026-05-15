@@ -157,27 +157,14 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
             failed += 1
             continue
 
-        candidates = await pexels.search_photos(scene.visual_query, per_page=3)
+        downloaded_path = None
+        selected_source = None
+        selected_attribution = None
 
-        if not candidates:
-            candidates = await pixabay.search_photos(scene.visual_query, per_page=3)
+        logger.info("trying pexels videos")
+        video_candidates = await pexels.search_videos(scene.visual_query, per_page=3)
 
-        if not candidates:
-            candidates = await pexels.search_videos(scene.visual_query, per_page=3)
-
-        if not candidates:
-            candidates = await pixabay.search_videos(scene.visual_query, per_page=3)
-
-        if not candidates:
-            scene.visual_status = "needs_ai"
-            failed += 1
-            continue
-
-        downloaded_paths = []
-        selected_sources = []
-        selected_attributions = []
-
-        for candidate in candidates:
+        for candidate in video_candidates:
             candidate_url = candidate.get("url")
             candidate_source = candidate.get("source", "unknown")
 
@@ -189,26 +176,71 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
             )
 
             if local_path:
-                downloaded_paths.append(local_path)
-                selected_sources.append(candidate_source)
-
-                if candidate.get("attribution"):
-                    selected_attributions.append(candidate.get("attribution"))
-
-            if len(downloaded_paths) >= 3:
+                downloaded_path = local_path
+                selected_source = candidate_source
+                selected_attribution = candidate.get("attribution")
+                logger.info("pexels video selected")
                 break
 
-        if downloaded_paths:
-            scene.visual_url = downloaded_paths[0]
-            scene.visual_source = selected_sources[0] if selected_sources else "stock"
+        if not downloaded_path:
+            logger.info("trying pixabay videos")
+            video_candidates = await pixabay.search_videos(scene.visual_query, per_page=3)
+
+            for candidate in video_candidates:
+                candidate_url = candidate.get("url")
+                candidate_source = candidate.get("source", "unknown")
+
+                local_path = await download_visual_asset(
+                    url=candidate_url,
+                    project_id=project_id,
+                    scene_order=scene.order,
+                    source=candidate_source,
+                )
+
+                if local_path:
+                    downloaded_path = local_path
+                    selected_source = candidate_source
+                    selected_attribution = candidate.get("attribution")
+                    logger.info("pixabay video selected")
+                    break
+
+        if not downloaded_path:
+            logger.info("no valid video found, trying photos")
+
+            photo_candidates = await pexels.search_photos(scene.visual_query, per_page=3)
+
+            if not photo_candidates:
+                photo_candidates = await pixabay.search_photos(scene.visual_query, per_page=3)
+
+            for candidate in photo_candidates:
+                candidate_url = candidate.get("url")
+                candidate_source = candidate.get("source", "unknown")
+
+                local_path = await download_visual_asset(
+                    url=candidate_url,
+                    project_id=project_id,
+                    scene_order=scene.order,
+                    source=candidate_source,
+                )
+
+                if local_path:
+                    downloaded_path = local_path
+                    selected_source = candidate_source
+                    selected_attribution = candidate.get("attribution")
+                    logger.info("photo fallback selected")
+                    break
+
+        if downloaded_path:
+            scene.visual_url = downloaded_path
+            scene.visual_source = selected_source if selected_source else "stock"
             scene.visual_status = "suggested"
 
-            if selected_attributions:
-                scene.on_screen_source = selected_attributions[0]
+            if selected_attribution:
+                scene.on_screen_source = selected_attribution
 
             filled += 1
         else:
-            scene.visual_status = "download_failed"
+            scene.visual_status = "needs_ai"
             failed += 1
 
     await db.commit()
