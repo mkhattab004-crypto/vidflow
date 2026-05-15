@@ -41,60 +41,93 @@ async def _run_async(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
     return await asyncio.to_thread(_run, cmd, timeout)
 
 
-async def render_diagnostic_video(output_path: str, aspect_ratio: str = "16:9") -> bool:
-    """Render a self-contained diagnostic MP4 using only FFmpeg lavfi sources."""
+async def run_ffmpeg_diagnostic(cmd: list[str]) -> tuple[bool, str]:
+    """Run an FFmpeg diagnostic command and return success plus stderr output."""
+    ok, stderr = await _run_async(cmd, timeout=120)
+    return ok, stderr or ""
+
+
+async def render_diagnostic_video(output_path: str, aspect_ratio: str = "16:9") -> dict:
+    """Render a self-contained diagnostic MP4 using simple lavfi fallbacks."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     w, h = DIMENSIONS.get(aspect_ratio, DIMENSIONS["16:9"])
 
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-f",
-        "lavfi",
-        "-i",
-        f"testsrc=size={w}x{h}:rate=30:duration=5",
-        "-f",
-        "lavfi",
-        "-i",
-        "sine=frequency=1000:duration=5",
-        "-shortest",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-movflags",
-        "+faststart",
-        output_path,
+    commands: list[tuple[str, list[str]]] = [
+        (
+            "A_color_libx264",
+            [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={w}x{h}:r=30:d=5",
+                "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart", output_path,
+            ],
+        ),
+        (
+            "B_testsrc_libx264",
+            [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", f"testsrc=size={w}x{h}:rate=30:duration=5",
+                "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart", output_path,
+            ],
+        ),
+        (
+            "C_color_mpeg4",
+            [
+                "ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={w}x{h}:r=30:d=5",
+                "-an", "-c:v", "mpeg4", "-q:v", "5", output_path,
+            ],
+        ),
     ]
 
-    ok, err = await _run_async(cmd, timeout=120)
-    if not ok:
-        logger.error(f"Diagnostic render failed for {output_path}: {err[-500:]}")
-        return False
+    last_stderr = ""
+    last_command_name = ""
 
-    if not os.path.exists(output_path):
-        logger.error(f"Diagnostic render failed: output file missing at {output_path}")
-        return False
+    for command_name, cmd in commands:
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
 
-    size = os.path.getsize(output_path)
-    if size <= 100_000:
-        logger.error(
-            f"Diagnostic render failed: output too small ({size} bytes) at {output_path}"
+        ok, stderr = await run_ffmpeg_diagnostic(cmd)
+        exists = os.path.exists(output_path)
+        size = os.path.getsize(output_path) if exists else 0
+        last_stderr = stderr
+        last_command_name = command_name
+
+        logger.info(
+            "Diagnostic command %s finished: return_ok=%s exists=%s size=%s stderr_tail=%s",
+            command_name,
+            ok,
+            exists,
+            size,
+            (stderr or "")[-1000:],
         )
-        return False
 
-    logger.info(
-        f"Diagnostic render succeeded: {output_path} ({w}x{h}, {size} bytes)"
+        if ok and exists and size > 10_000:
+            return {
+                "ok": True,
+                "output_path": output_path,
+                "size": size,
+                "stderr": stderr,
+                "command_name": command_name,
+            }
+
+    exists = os.path.exists(output_path)
+    size = os.path.getsize(output_path) if exists else 0
+    logger.error(
+        "Diagnostic render failed after all commands. last_command=%s exists=%s size=%s stderr_tail=%s",
+        last_command_name,
+        exists,
+        size,
+        (last_stderr or "")[-1000:],
     )
-    return True
+    return {
+        "ok": False,
+        "output_path": output_path,
+        "size": size,
+        "stderr": last_stderr,
+        "command_name": last_command_name,
+    }
 
 
 def _probe_duration(path: str) -> float:

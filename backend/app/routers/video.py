@@ -201,15 +201,19 @@ async def diagnostic_render():
     os.makedirs(diagnostics_dir, exist_ok=True)
     output_path = os.path.join(diagnostics_dir, "diagnostic_16x9.mp4")
 
-    ok = await render_diagnostic_video(output_path, "16:9")
-    if not ok:
-        raise HTTPException(
-            status_code=500,
-            detail="Diagnostic render failed: backend could not create lavfi MP4",
-        )
+    result = await render_diagnostic_video(output_path, "16:9")
+    payload = {
+        "ok": bool(result.get("ok")),
+        "path": result.get("output_path", output_path),
+        "size": int(result.get("size", 0) or 0),
+        "command": result.get("command_name", ""),
+        "stderr_tail": (result.get("stderr") or "")[-2000:],
+    }
 
-    file_size = os.path.getsize(output_path)
-    return {"ok": True, "path": output_path, "size": file_size}
+    if not payload["ok"]:
+        raise HTTPException(status_code=500, detail=payload)
+
+    return payload
 
 
 @router.get("/diagnostic-download")
