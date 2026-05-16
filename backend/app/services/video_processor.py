@@ -710,37 +710,53 @@ async def compose_video(
 
     if not ok or not os.path.exists(output_path) or os.path.getsize(output_path) < MIN_FINAL_OUTPUT_SIZE_BYTES:
         logger.info("trying mpeg4 final render fallback")
-        mpeg4_cmd = cmd.copy()
-        try:
-            codec_index = mpeg4_cmd.index("-c:v")
-            mpeg4_cmd[codec_index + 1] = "mpeg4"
-        except (ValueError, IndexError):
-            mpeg4_cmd += ["-c:v", "mpeg4"]
-        filtered_cmd = []
-        skip_next = False
-        for idx, token in enumerate(mpeg4_cmd):
-            if skip_next:
-                skip_next = False
-                continue
-            if token == "-crf":
-                skip_next = True
-                continue
-            if token == "-q:v":
-                skip_next = True
-                continue
-            filtered_cmd.append(token)
-        mpeg4_cmd = filtered_cmd
-        try:
-            output_idx = mpeg4_cmd.index(output_path)
-        except ValueError:
-            output_idx = len(mpeg4_cmd)
-            mpeg4_cmd.append(output_path)
-        mpeg4_cmd[output_idx:output_idx] = ["-q:v", "5"]
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+
+        mpeg4_cmd = ["ffmpeg", "-y"] + inputs
+
+        if filter_parts:
+            mpeg4_cmd += ["-filter_complex", ";".join(filter_parts)]
+            mpeg4_cmd += ["-map", video_stream]
+        else:
+            mpeg4_cmd += ["-map", "0:v"]
+
+        mpeg4_cmd += audio_map
+
+        mpeg4_cmd += [
+            "-c:v",
+            "mpeg4",
+            "-q:v",
+            "5",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            "30",
+        ]
+
+        if audio_ok or bg_ok:
+            mpeg4_cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
+
+        mpeg4_cmd += [output_path]
+
         ok, err = await _run_async(mpeg4_cmd)
-        if ok and os.path.exists(output_path) and os.path.getsize(output_path) >= MIN_FINAL_OUTPUT_SIZE_BYTES:
+        fallback_exists = os.path.exists(output_path)
+        fallback_size = os.path.getsize(output_path) if fallback_exists else 0
+        fallback_duration = _probe_duration(output_path) if fallback_exists else 0.0
+        fallback_valid = (
+            ok
+            and fallback_exists
+            and fallback_size >= MIN_FINAL_OUTPUT_SIZE_BYTES
+            and fallback_duration > 0.5
+        )
+        ok = fallback_valid
+        if fallback_valid:
             logger.info("mpeg4 final render fallback succeeded")
         else:
-            logger.error(f"mpeg4 final render fallback failed: {err[-300:]}")
+            logger.error(f"mpeg4 final render fallback failed: {(err or '')[-500:]}")
 
     # Cleanup temp files
     for f in normalized + [concat_file, concat_path]:
