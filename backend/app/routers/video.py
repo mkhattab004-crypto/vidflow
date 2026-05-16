@@ -74,13 +74,25 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
 
             scenes_data = [
                 {
+                    "id": s.id,
+                    "order": s.order,
                     "visual_url": s.visual_url,
+                    "visual_status": getattr(s, "visual_status", None),
                     "duration": s.duration,
                     "script_text": s.script_text,
                     "on_screen_source": s.on_screen_source,
                 }
                 for s in scenes
             ]
+            logger.info("Sending %s scenes to compose_video for project %s", len(scenes_data), project_id)
+            for scene in scenes_data:
+                logger.info(
+                    "render scene payload: id=%s order=%s visual_url=%s visual_status=%s",
+                    scene.get("id"),
+                    scene.get("order"),
+                    scene.get("visual_url"),
+                    scene.get("visual_status"),
+                )
 
             subtitle_config = project.template_config if burn_subtitles and srt_path else None
 
@@ -116,9 +128,19 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                     output_url=output_path,
                 )
             else:
+                if aspect_ratio == "16:9":
+                    project.output_url = None
+                elif aspect_ratio == "9:16":
+                    project.output_9_16_url = None
+                elif aspect_ratio == "1:1":
+                    project.output_1_1_url = None
                 project.status = "render_failed"
                 await db.commit()
-                logger.error(f"Render failed: {project.title} ({aspect_ratio})")
+                logger.error(
+                    "Render failed because no valid visual clips were available: %s (%s)",
+                    project.title,
+                    aspect_ratio,
+                )
 
         except Exception as e:
             logger.error(f"Render task exception for {project_id}: {e}", exc_info=True)
