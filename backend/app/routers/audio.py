@@ -8,8 +8,7 @@ from typing import Optional
 import os
 from app.database import get_db
 from app.models.project import Project, Scene
-from app.models.channel import Channel
-from app.services.kokoro_tts import VOICES, generate_speech
+from app.services.kokoro_tts import VOICES, generate_speech, _select_edge_tts_voice
 from app.services.audio_assembler import assemble_project_audio, generate_scene_timings
 
 router = APIRouter(prefix="/audio", tags=["audio"])
@@ -53,11 +52,22 @@ async def voices_by_language():
     return grouped
 
 
+
+
+@router.get("/provider")
+async def tts_provider(language: str = "en"):
+    from app.config import settings
+    provider = (settings.TTS_PROVIDER or "edge_tts")
+    return {
+        "tts_provider": provider,
+        "project_language": language,
+        "selected_tts_voice": _select_edge_tts_voice(language),
+    }
 @router.get("/preview")
 async def preview_voice(text: str, voice_id: str, speed: float = 1.0):
     """Generate a short audio preview for a voice (GET so browser <audio> can use it directly)."""
     text = text[:250].strip() or "Hello, this is a voice preview."
-    path = await generate_speech(text, voice_id, speed)
+    path = await generate_speech(text, voice_id, speed, language="en")
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=500, detail="Audio generation failed")
     return FileResponse(path, media_type="audio/mpeg", filename="preview.mp3")
@@ -99,12 +109,13 @@ async def generate_audio(req: TTSRequest, background_tasks: BackgroundTasks, db:
         voice_id=req.voice_id,
         speed=req.speed,
         bg_music=bg_music,
+        language=(project.language or (project.channel.language if project.channel else "en") or "en"),
     )
 
     return {"status": "audio_generating", "project_id": req.project_id, "scenes": len(scenes_data)}
 
 
-async def _do_assemble(project_id: str, scenes_data: list, voice_id: str, speed: float, bg_music: Optional[str]):
+async def _do_assemble(project_id: str, scenes_data: list, voice_id: str, speed: float, bg_music: Optional[str], language: str):
     """Background task: assemble audio and update project."""
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
@@ -115,6 +126,7 @@ async def _do_assemble(project_id: str, scenes_data: list, voice_id: str, speed:
                 speed=speed,
                 project_id=project_id,
                 bg_music_path=bg_music,
+                language=language,
             )
             project = await db.get(Project, project_id)
             if project:
@@ -139,7 +151,9 @@ async def generate_scene_audio(req: SceneTTSRequest, db: AsyncSession = Depends(
     if not scene.script_text:
         raise HTTPException(status_code=400, detail="Scene has no script text")
 
-    path = await generate_speech(scene.script_text, req.voice_id, req.speed)
+    project = await db.get(Project, req.project_id)
+    language = (project.language if project else "en")
+    path = await generate_speech(scene.script_text, req.voice_id, req.speed, language=language)
     scene.audio_url = path
     await db.commit()
     return {"scene_id": req.scene_id, "audio_path": path, "status": "ready"}

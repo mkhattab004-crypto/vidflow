@@ -16,3 +16,4 @@ google-generativeai==0.5.4
 python-dotenv==1.0.1
 gTTS==2.5.1
 # cache-bust-1
+edge-tts==6.1.12

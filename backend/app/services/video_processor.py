@@ -908,9 +908,42 @@ async def compose_video(
         logger.error(f"Final video file invalid: {output_path}")
         return False
 
+    if audio_ok and os.path.exists(audio_path):
+        mux_ok = await _mux_audio_into_video(output_path, audio_path, output_path)
+        if not mux_ok:
+            logger.warning("audio mux failed, keeping video-only output")
+
     return True
 
 
+
+
+def _has_audio_stream(path: str) -> bool:
+    try:
+        r = subprocess.run([
+            "ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", path
+        ], capture_output=True, text=True, timeout=20)
+        return r.returncode == 0 and "audio" in (r.stdout or "")
+    except Exception:
+        return False
+
+
+async def _mux_audio_into_video(video_path: str, audio_path: str, output_path: str) -> bool:
+    temp_out = output_path + ".mux.tmp.mp4"
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path, "-i", audio_path,
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", temp_out
+    ]
+    ok, err = await _run_async(cmd)
+    if not ok:
+        logger.error("audio mux ffmpeg failed: %s", (err or "")[-500:])
+        return False
+    if not _valid_final_output(temp_out) or not _has_audio_stream(temp_out):
+        logger.error("audio mux output invalid or missing audio stream: %s", temp_out)
+        return False
+    os.replace(temp_out, output_path)
+    logger.info("final video with audio mux succeeded")
+    return True
 def _logo_overlay_pos(position: str, w: int, h: int) -> str:
     pad = 20
     positions = {

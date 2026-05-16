@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "/tmp/vidflow_uploads"
     OUTPUT_DIR: str = "/tmp/vidflow_outputs"
 
+    # TTS
+    TTS_PROVIDER: str = "edge_tts"
+    EDGE_TTS_VOICE_AR: Optional[str] = None
+    EDGE_TTS_VOICE_EN: Optional[str] = None
+    EDGE_TTS_VOICE_TR: Optional[str] = None
+    EDGE_TTS_VOICE: Optional[str] = None
+
     # Optional external services
     N8N_WEBHOOK_URL: Optional[str] = None
     WHATSAPP_NUMBER: Optional[str] = None
