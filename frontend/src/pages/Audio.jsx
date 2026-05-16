@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { Mic, Play, ArrowRight } from 'lucide-react'
-import { getProjects, getProject, getVoices, generateAudio, updateProject, previewVoiceUrl } from '../services/api'
+import { getProjects, getProject, getVoices, generateAudio, updateProject, previewVoiceUrl, getTtsProvider } from '../services/api'
 import LoadingSpinner from '../components/common/LoadingSpinner'
 import useStore from '../store/useStore'
 import { useNavigate } from 'react-router-dom'
@@ -19,6 +19,7 @@ export default function Audio() {
   const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: () => getProjects() })
   const { data: project } = useQuery({ queryKey: ['project', activeProjectId], queryFn: () => getProject(activeProjectId), enabled: !!activeProjectId })
   const { data: voices = [] } = useQuery({ queryKey: ['voices'], queryFn: () => getVoices() })
+  const { data: providerInfo } = useQuery({ queryKey: ['tts-provider', channelLanguage], queryFn: () => getTtsProvider(channelLanguage || 'en'), enabled: !!channelLanguage })
 
   const channelLanguage = project?.language || project?.channel?.language || 'en'
   const isIslamic = project?.is_islamic || project?.channel?.is_islamic || false
@@ -50,6 +51,7 @@ export default function Audio() {
     <div className="max-w-2xl">
       <h1 className="page-title">Audio — {project?.title}</h1>
       <p className="page-subtitle">Select a voice and generate the narration</p>
+      <p className="text-sm text-slate-400 mb-2">TTS Provider: {providerInfo?.tts_provider || 'edge_tts'} · Voice: {providerInfo?.selected_tts_voice || 'en-US-GuyNeural'}</p>
 
       <div className="card mb-4">
         <h3 className="section-title flex items-center gap-2"><Mic size={16} /> Voice Selection</h3>

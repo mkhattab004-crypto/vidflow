@@ -86,6 +86,7 @@ export const getVisualGaps  = (pid)             => api.get(`/visuals/gap-analysi
 export const getVoices         = (language)   => api.get('/audio/voices', { params: language ? { language } : {} }).then(toArr)
 export const getVoicesByLang   = ()           => api.get('/audio/voices/by-language').then(r => r.data)
 export const generateAudio     = (data)       => api.post('/audio/generate', data).then(r => r.data)
+export const getTtsProvider    = (language)   => api.get('/audio/provider', { params: { language } }).then(r => r.data)
 export const generateSceneAudio = (data)      => api.post('/audio/generate-scene', data).then(r => r.data)
 export const getAudioStatus    = (id)         => api.get(`/audio/status/${id}`).then(r => r.data)
 export const getSceneTimings   = (id, voice, speed) =>

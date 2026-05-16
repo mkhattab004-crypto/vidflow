@@ -2,13 +2,12 @@ import os
 import asyncio
 import hashlib
 import logging
+import subprocess
 from typing import Optional
 from app.config import settings
 from app.services.kokoro_tts import generate_speech
 
 logger = logging.getLogger(__name__)
-
-# Average spoken words per second at normal speed
 _WPS = 2.5
 
 
@@ -17,72 +16,74 @@ def _estimate_duration(text: str, speed: float = 1.0) -> float:
     return max(1.0, words / (_WPS * max(speed, 0.5)))
 
 
-async def assemble_project_audio(
-    scenes: list[dict],
-    voice_id: str,
-    speed: float,
-    project_id: str,
-    bg_music_path: Optional[str] = None,
-) -> str:
+def _probe_duration(path: str) -> float:
+    try:
+        r = subprocess.run([
+            "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path
+        ], capture_output=True, text=True, timeout=20)
+        if r.returncode != 0:
+            return 0.0
+        return float((r.stdout or "0").strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def _valid_audio_file(path: str) -> bool:
+    return bool(path and os.path.exists(path) and os.path.getsize(path) > 5_000 and _probe_duration(path) > 0.5)
+
+
+async def assemble_project_audio(scenes: list[dict], voice_id: str, speed: float, project_id: str, language: str = "en", bg_music_path: Optional[str] = None) -> str:
     out_dir = os.path.join(settings.OUTPUT_DIR, project_id)
     os.makedirs(out_dir, exist_ok=True)
     final_path = os.path.join(out_dir, "narration.mp3")
 
-    tasks = [
-        _generate_scene_audio(scene["script_text"] or "", voice_id, speed, out_dir, scene.get("id", i))
-        for i, scene in enumerate(scenes)
-    ]
+    tasks = [_generate_scene_audio(scene["script_text"] or "", voice_id, speed, out_dir, scene.get("id", i), language) for i, scene in enumerate(scenes)]
     scene_paths = await asyncio.gather(*tasks)
-
-    valid_paths = [p for p in scene_paths if p and os.path.exists(p)]
+    valid_paths = [p for p in scene_paths if _valid_audio_file(p)]
     if not valid_paths:
-        _create_silent_mp3(final_path)
-        return final_path
+        return ""
 
-    # Concatenate MP3 files at byte level — works for sequential playback
-    with open(final_path, "wb") as out:
+    concat_list = os.path.join(out_dir, "narration_concat.txt")
+    with open(concat_list, "w", encoding="utf-8") as f:
         for path in valid_paths:
-            try:
-                with open(path, "rb") as f:
-                    out.write(f.read())
-            except Exception as e:
-                logger.warning(f"Could not read {path}: {e}")
+            f.write(f"file '{path}'\n")
 
-    logger.info(f"Assembled {len(valid_paths)} scene audio files → {final_path}")
-    return final_path
+    cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list, "-c:a", "libmp3lame", "-b:a", "192k", final_path]
+    proc = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=180)
+    if proc.returncode != 0:
+        logger.error("audio concat failed: %s", (proc.stderr or "")[-500:])
+        return ""
+
+    duration = _probe_duration(final_path)
+    logger.info(
+        "combined_narration_path=%s combined_narration_duration_seconds=%.3f project_language=%s",
+        final_path,
+        duration,
+        language,
+    )
+    return final_path if _valid_audio_file(final_path) else ""
 
 
-async def _generate_scene_audio(
-    text: str,
-    voice_id: str,
-    speed: float,
-    out_dir: str,
-    scene_id,
-) -> Optional[str]:
+async def _generate_scene_audio(text: str, voice_id: str, speed: float, out_dir: str, scene_id, language: str) -> Optional[str]:
     if not text.strip():
         return None
     fname = f"scene_{scene_id}_{hashlib.md5(text[:50].encode()).hexdigest()[:8]}.mp3"
     path = os.path.join(out_dir, fname)
-    if os.path.exists(path):
-        return path
-    try:
-        return await generate_speech(text, voice_id, speed, out_dir)
-    except Exception as e:
-        logger.warning(f"Scene {scene_id} TTS failed: {e}")
-        _create_silent_mp3(path)
-        return path
-
-
-def _create_silent_mp3(path: str) -> None:
-    with open(path, "wb") as f:
-        f.write(b"\xff\xfb\x90\x00" + b"\x00" * 413)
+    generated = await generate_speech(text, voice_id, speed, out_dir, language=language)
+    if generated and _valid_audio_file(generated):
+        logger.info(
+            "scene_id=%s generated_audio_path=%s audio_size_bytes=%s audio_duration_seconds=%.3f",
+            scene_id,
+            generated,
+            os.path.getsize(generated),
+            _probe_duration(generated),
+        )
+    return generated
 
 
 def get_audio_duration(path: str, text: str = "", speed: float = 1.0) -> float:
-    """Estimate audio duration from text length (no binary parsing needed)."""
     if text:
         return _estimate_duration(text, speed)
-    # Rough estimate from file size: ~16 kbps MP3 ≈ 2000 bytes/sec
     try:
         size = os.path.getsize(path)
         return max(1.0, size / 2000)
@@ -91,8 +92,6 @@ def get_audio_duration(path: str, text: str = "", speed: float = 1.0) -> float:
 
 
 async def generate_scene_timings(scenes: list[dict], voice_id: str, speed: float, project_id: str) -> list[dict]:
-    out_dir = os.path.join(settings.OUTPUT_DIR, project_id)
-    os.makedirs(out_dir, exist_ok=True)
     result = []
     current_time = 0.0
     for scene in scenes:
