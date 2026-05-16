@@ -150,6 +150,7 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
 
     filled = 0
     failed = 0
+    used_asset_urls: set[str] = set()
 
     for scene in scenes:
         if not scene.visual_query:
@@ -167,6 +168,9 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
         for candidate in video_candidates:
             candidate_url = candidate.get("url")
             candidate_source = candidate.get("source", "unknown")
+            if candidate_url in used_asset_urls:
+                logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
+                continue
 
             local_path = await download_visual_asset(
                 url=candidate_url,
@@ -189,6 +193,9 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
             for candidate in video_candidates:
                 candidate_url = candidate.get("url")
                 candidate_source = candidate.get("source", "unknown")
+                if candidate_url in used_asset_urls:
+                    logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
+                    continue
 
                 local_path = await download_visual_asset(
                     url=candidate_url,
@@ -215,6 +222,9 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
             for candidate in photo_candidates:
                 candidate_url = candidate.get("url")
                 candidate_source = candidate.get("source", "unknown")
+                if candidate_url in used_asset_urls:
+                    logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
+                    continue
 
                 local_path = await download_visual_asset(
                     url=candidate_url,
@@ -238,6 +248,8 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
             if selected_attribution:
                 scene.on_screen_source = selected_attribution
 
+            if scene.visual_url:
+                used_asset_urls.add(scene.visual_url)
             filled += 1
         else:
             scene.visual_status = "needs_ai"

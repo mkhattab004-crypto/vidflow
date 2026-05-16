@@ -63,17 +63,10 @@ async def check_duplicate(data: DuplicateCheckRequest, db: AsyncSession = Depend
 
 
 VIDEO_TYPES = [
-    {"id": "story", "label": "Story", "label_ar": "قصة"},
-    {"id": "explainer", "label": "Explainer", "label_ar": "شرح"},
-    {"id": "listicle", "label": "Listicle", "label_ar": "قائمة"},
-    {"id": "quote", "label": "Quote", "label_ar": "اقتباس"},
-    {"id": "verse_tafsir", "label": "Verse + Tafsir", "label_ar": "آية وتفسير"},
-    {"id": "hadith", "label": "Hadith", "label_ar": "حديث"},
-    {"id": "biography", "label": "Biography", "label_ar": "سيرة"},
-    {"id": "mystery", "label": "Mystery", "label_ar": "غموض"},
-    {"id": "comparison", "label": "Comparison", "label_ar": "مقارنة"},
-    {"id": "countdown", "label": "Short Countdown", "label_ar": "عد تنازلي"},
+    {"id": "short_form", "label": "Short / Reel / TikTok", "label_ar": "قصير / ريل / تيك توك"},
+    {"id": "long_form", "label": "Long YouTube Video", "label_ar": "فيديو يوتيوب طويل"},
 ]
+
 
 
 @router.get("/video-types")
