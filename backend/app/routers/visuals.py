@@ -14,6 +14,67 @@ logger = logging.getLogger(__name__)
 
 ASSET_ROOT = "/tmp/vidflow_assets"
 
+ISLAMIC_DETECTION_KEYWORDS = {
+    "islam", "islamic", "quran", "qur'an", "koran", "ayat", "surah", "hadith", "prophet", "allah", "prayer", "salah", "mosque", "ramadan", "dua", "dhikr",
+    "إسلام", "اسلامي", "القرآن", "آية", "سورة", "حديث", "النبي", "الله", "الصلاة", "مسجد", "رمضان", "دعاء", "ذكر",
+    "islami", "kuran", "ayet", "sure", "hadis", "peygamber", "namaz", "cami", "ramazan", "zikir",
+}
+
+ISLAMIC_BLOCKED_KEYWORDS = {
+    "woman", "girl", "female model", "hair", "uncovered hair", "sexy", "bikini", "swimsuit", "beach girl", "dancing", "party", "nightclub",
+    "romance", "couple kissing", "alcohol", "bar", "fashion model", "lingerie", "body", "legs", "cleavage", "makeup model", "yoga woman", "fitness woman",
+    "امرأة", "بنت", "شعر", "عارضة", "رقص", "حفلة", "بحر", "مايوه", "حب", "قبلات", "كحول",
+    "kadın", "kız", "saç", "model", "dans", "parti", "plaj", "aşk", "öpüşme", "alkol",
+}
+
+ISLAMIC_PROPHETIC_BLOCKLIST = {"muhammad", "prophet muhammad", "prophet", "messenger", "rasul", "sahaba", "companion", "angel", "allah figure", "تصوير النبي", "صحابة", "ملائكة"}
+ISLAMIC_SAFE_QUERY_TERMS = [
+    "mosque interior", "quran close up", "muslim prayer silhouette", "islamic architecture", "arabic calligraphy", "prayer beads",
+    "crescent moon", "night sky", "spiritual light", "old manuscript", "peaceful desert", "minaret", "muslim man praying", "hands dua",
+]
+ISLAMIC_FALLBACK_QUERIES = [
+    "mosque interior", "quran close up", "islamic calligraphy", "minaret night", "prayer beads close up", "night sky stars",
+]
+
+
+def _normalize_text(value: str | None) -> str:
+    return (value or "").lower().strip()
+
+
+def _contains_any(text: str, terms: set[str]) -> bool:
+    return any(term in text for term in terms)
+
+
+def _detect_islamic_visual_profile(project: Project, scenes: list[Scene]) -> bool:
+    haystack = " ".join([
+        _normalize_text(project.niche),
+        _normalize_text(project.title),
+        _normalize_text(project.idea),
+        _normalize_text(project.description),
+        " ".join(_normalize_text(s.script_text) for s in scenes),
+        " ".join(_normalize_text(s.script_ar) for s in scenes),
+    ])
+    return bool(project.is_islamic or _contains_any(haystack, ISLAMIC_DETECTION_KEYWORDS))
+
+
+def _rewrite_safe_query(original_query: str) -> str:
+    base_terms = ", ".join(ISLAMIC_SAFE_QUERY_TERMS[:4])
+    return base_terms if _contains_any(_normalize_text(original_query), ISLAMIC_PROPHETIC_BLOCKLIST) else f"{base_terms}, {_normalize_text(original_query)}"
+
+
+def _is_blocked_visual_candidate(candidate: dict) -> str | None:
+    text_blob = " ".join([
+        _normalize_text(str(candidate.get("title", ""))),
+        _normalize_text(str(candidate.get("description", ""))),
+        _normalize_text(str(candidate.get("tags", ""))),
+        _normalize_text(str(candidate.get("url", ""))),
+        _normalize_text(str(candidate.get("attribution", ""))),
+    ])
+    for term in ISLAMIC_BLOCKED_KEYWORDS.union(ISLAMIC_PROPHETIC_BLOCKLIST):
+        if term in text_blob:
+            return term
+    return None
+
 def _resolve_local_visual_path(visual_url: str | None) -> str | None:
     if not visual_url:
         return None
@@ -144,9 +205,17 @@ async def assign_visual(
 
 @router.post("/auto-fill/{project_id}")
 async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSession = Depends(get_db)):
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
     result = await db.execute(select(Scene).where(Scene.project_id == project_id))
     all_scenes = result.scalars().all()
     scenes = [scene for scene in all_scenes if _needs_visual_refill(scene)]
+    is_islamic_profile = _detect_islamic_visual_profile(project, all_scenes)
+
+    if is_islamic_profile:
+        logger.info("visual_safety_profile=islamic project_id=%s", project_id)
 
     filled = 0
     failed = 0
@@ -162,12 +231,23 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
         selected_source = None
         selected_attribution = None
 
+        query_to_use = scene.visual_query
+        if is_islamic_profile:
+            query_to_use = _rewrite_safe_query(scene.visual_query)
+            logger.info("original_visual_query=%s", scene.visual_query)
+            logger.info("rewritten_safe_query=%s", query_to_use)
+
         logger.info("trying pexels videos")
-        video_candidates = await pexels.search_videos(scene.visual_query, per_page=3)
+        video_candidates = await pexels.search_videos(query_to_use, per_page=3)
 
         for candidate in video_candidates:
             candidate_url = candidate.get("url")
             candidate_source = candidate.get("source", "unknown")
+            if is_islamic_profile:
+                blocked_reason = _is_blocked_visual_candidate(candidate)
+                if blocked_reason:
+                    logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
+                    continue
             if candidate_url in used_asset_urls:
                 logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
                 continue
@@ -188,11 +268,16 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
 
         if not downloaded_path:
             logger.info("trying pixabay videos")
-            video_candidates = await pixabay.search_videos(scene.visual_query, per_page=3)
+            video_candidates = await pixabay.search_videos(query_to_use, per_page=3)
 
             for candidate in video_candidates:
                 candidate_url = candidate.get("url")
                 candidate_source = candidate.get("source", "unknown")
+                if is_islamic_profile:
+                    blocked_reason = _is_blocked_visual_candidate(candidate)
+                    if blocked_reason:
+                        logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
+                        continue
                 if candidate_url in used_asset_urls:
                     logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
                     continue
@@ -214,14 +299,19 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
         if not downloaded_path:
             logger.info("no valid video found, trying photos")
 
-            photo_candidates = await pexels.search_photos(scene.visual_query, per_page=3)
+            photo_candidates = await pexels.search_photos(query_to_use, per_page=3)
 
             if not photo_candidates:
-                photo_candidates = await pixabay.search_photos(scene.visual_query, per_page=3)
+                photo_candidates = await pixabay.search_photos(query_to_use, per_page=3)
 
             for candidate in photo_candidates:
                 candidate_url = candidate.get("url")
                 candidate_source = candidate.get("source", "unknown")
+                if is_islamic_profile:
+                    blocked_reason = _is_blocked_visual_candidate(candidate)
+                    if blocked_reason:
+                        logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
+                        continue
                 if candidate_url in used_asset_urls:
                     logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
                     continue
@@ -240,6 +330,28 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
                     logger.info("photo fallback selected")
                     break
 
+        if not downloaded_path and is_islamic_profile:
+            for fallback_query in ISLAMIC_FALLBACK_QUERIES:
+                logger.info("fallback_safe_visual_query=%s", fallback_query)
+                fallback_candidates = await pexels.search_photos(fallback_query, per_page=3)
+                if not fallback_candidates:
+                    fallback_candidates = await pixabay.search_photos(fallback_query, per_page=3)
+                for candidate in fallback_candidates:
+                    candidate_url = candidate.get("url")
+                    blocked_reason = _is_blocked_visual_candidate(candidate)
+                    if blocked_reason or candidate_url in used_asset_urls:
+                        if blocked_reason:
+                            logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate.get("source", "unknown"), candidate_url)
+                        continue
+                    local_path = await download_visual_asset(url=candidate_url, project_id=project_id, scene_order=scene.order, source=candidate.get("source", "unknown"))
+                    if local_path:
+                        downloaded_path = local_path
+                        selected_source = candidate.get("source", "unknown")
+                        selected_attribution = candidate.get("attribution")
+                        break
+                if downloaded_path:
+                    break
+
         if downloaded_path:
             scene.visual_url = downloaded_path
             scene.visual_source = selected_source if selected_source else "stock"
@@ -250,6 +362,8 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
 
             if scene.visual_url:
                 used_asset_urls.add(scene.visual_url)
+                if is_islamic_profile:
+                    logger.info("selected_safe_visual_url=%s", scene.visual_url)
             filled += 1
         else:
             scene.visual_status = "needs_ai"
