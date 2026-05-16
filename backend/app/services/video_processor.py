@@ -155,6 +155,25 @@ def _probe_duration(path: str) -> float:
         return 0.0
 
 
+def _valid_final_output(path: str) -> bool:
+    """Validate final render output by existence, size threshold, and duration."""
+    if not os.path.exists(path):
+        logger.error("output missing")
+        return False
+
+    size = os.path.getsize(path)
+    if size < MIN_FINAL_OUTPUT_SIZE_BYTES:
+        logger.error("output too small")
+        return False
+
+    duration = _probe_duration(path)
+    if duration <= 0.5:
+        logger.error("output duration invalid")
+        return False
+
+    return True
+
+
 def _scale_filter(w: int, h: int) -> str:
     """Return an FFmpeg scale+pad filter that fills the frame without distortion."""
     return (
@@ -708,7 +727,7 @@ async def compose_video(
 
     ok, err = await _run_async(cmd)
 
-    if not ok or not os.path.exists(output_path) or os.path.getsize(output_path) < MIN_FINAL_OUTPUT_SIZE_BYTES:
+    if not ok or not _valid_final_output(output_path):
         logger.info("trying mpeg4 final render fallback")
         if os.path.exists(output_path):
             try:
@@ -746,12 +765,16 @@ async def compose_video(
         fallback_exists = os.path.exists(output_path)
         fallback_size = os.path.getsize(output_path) if fallback_exists else 0
         fallback_duration = _probe_duration(output_path) if fallback_exists else 0.0
-        fallback_valid = (
-            ok
-            and fallback_exists
-            and fallback_size >= MIN_FINAL_OUTPUT_SIZE_BYTES
-            and fallback_duration > 0.5
+        logger.info(
+            "mpeg4 final fallback output stats: exists=%s size_bytes=%s duration_seconds=%.3f return_ok=%s",
+            fallback_exists,
+            fallback_size,
+            fallback_duration,
+            ok,
         )
+        fallback_valid = _valid_final_output(output_path)
+        if fallback_valid and not ok:
+            logger.info("final output exists and passed validation despite ffmpeg return code")
         ok = fallback_valid
         if fallback_valid:
             logger.info("mpeg4 final render fallback succeeded")
@@ -769,8 +792,8 @@ async def compose_video(
         logger.error(f"Final composition failed: {err[-300:]}")
         return False
 
-    if not os.path.exists(output_path) or os.path.getsize(output_path) < MIN_FINAL_OUTPUT_SIZE_BYTES:
-        logger.error(f"Final video file missing or too small: {output_path}")
+    if not _valid_final_output(output_path):
+        logger.error(f"Final video file invalid: {output_path}")
         return False
 
     return True

@@ -137,7 +137,7 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 project.status = "render_failed"
                 await db.commit()
                 logger.error(
-                    "Render failed because no valid visual clips were available: %s (%s)",
+                    "Render failed during final composition or output validation: %s (%s)",
                     project.title,
                     aspect_ratio,
                 )
