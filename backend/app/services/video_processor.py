@@ -155,6 +155,11 @@ def _probe_duration(path: str) -> float:
         return 0.0
 
 
+def probe_media_duration(path: str) -> float:
+    """Public wrapper for probing media duration."""
+    return _probe_duration(path)
+
+
 def _valid_final_output(path: str) -> bool:
     """Validate final render output by existence, size threshold, and duration."""
     if not os.path.exists(path):

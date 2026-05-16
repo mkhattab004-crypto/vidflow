@@ -14,6 +14,7 @@ from app.services.video_processor import (
     convert_aspect_ratio,
     generate_srt,
     render_diagnostic_video,
+    probe_media_duration,
 )
 from app.services.audio_assembler import generate_scene_timings
 from app.services.n8n_service import notify_video_ready
@@ -94,6 +95,16 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                     scene.get("visual_status"),
                 )
 
+            total_scene_duration = float(sum(float(s.get("duration") or 0) for s in scenes_data))
+            logger.info(
+                "render metrics pre-compose: project_id=%s video_type=%s generated_scene_count=%s total_scene_duration=%.3f number_of_scenes_sent_to_render=%s",
+                project_id,
+                project.video_type,
+                len(scenes),
+                total_scene_duration,
+                len(scenes_data),
+            )
+
             subtitle_config = project.template_config if burn_subtitles and srt_path else None
 
             ok = await compose_video(
@@ -117,6 +128,16 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 elif aspect_ratio == "1:1":
                     project.output_1_1_url = output_path
                 project.status = "rendered"
+                final_output_duration_seconds = probe_media_duration(output_path)
+                logger.info(
+                    "render metrics final: project_id=%s video_type=%s generated_scene_count=%s total_scene_duration=%.3f number_of_scenes_sent_to_render=%s final_output_duration_seconds=%.3f",
+                    project_id,
+                    project.video_type,
+                    len(scenes),
+                    total_scene_duration,
+                    len(scenes_data),
+                    final_output_duration_seconds,
+                )
                 logger.info(f"Render complete: {project.title} ({aspect_ratio})")
                 await db.commit()
 

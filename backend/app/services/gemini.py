@@ -127,7 +127,6 @@ async def generate_script(
     is_islamic: bool = False,
     duration_minutes: int = 8,
 ) -> dict:
-    scene_count = max(8, min(15, duration_minutes * 2))
     visual_note = _NICHE_VISUAL_NOTES.get(niche, "Relevant stock footage")
     islamic_section = _ISLAMIC_RULES if is_islamic else ""
     ar_translation_note = (
@@ -138,11 +137,20 @@ async def generate_script(
     prompt = f"""You are a professional YouTube scriptwriter.
 Channel: {channel_name} | Niche: {niche} | Type: {video_type} | Language: {language} | Tone: {tone}
 Video topic: {idea}
-Target length: ~{duration_minutes} minutes ({scene_count} scenes, ~{duration_minutes*60//scene_count}s each)
 {islamic_section}
 
 Create a complete, publish-ready YouTube {video_type} script.
 {ar_translation_note}
+
+Video type pacing rules:
+- If video_type is "short_form": create a short-form script under 60 seconds total. Use dynamic scene count (usually 8-12), short scene durations (usually 3-6 seconds), and keep summed scene durations under 60 seconds.
+- If video_type is "long_form": create a complete long-form script. Use as many scenes as needed based on topic complexity, narration length, and pacing. Do not limit the output to 15 scenes. Use longer scene durations (usually 8-20 seconds) and allow total duration to scale naturally from scene durations.
+- For any other video_type: choose scene count and durations dynamically from narration and pacing.
+
+Scene planning requirements:
+- Decide scene count dynamically from: video_type, topic complexity, narration length, pacing.
+- Every scene must have a unique visual_query that matches that exact scene (avoid repeating visual_query text).
+- Do not force equal duration across scenes.
 
 Return ONLY a valid JSON object with this exact structure:
 {{
@@ -169,7 +177,7 @@ Return ONLY a valid JSON object with this exact structure:
 }}
 
 Scenes must: start with a hook, build narrative, include CTA near end, end with outro.
-Visual queries must be specific (e.g. "ancient mosque aerial view sunset" not just "mosque").
+Visual queries must be specific (e.g. "ancient mosque aerial view sunset" not just "mosque") and unique per scene.
 Visual note for this niche: {visual_note}"""
 
     logger.info(f"generate_script: idea={idea!r:.60} type={video_type} lang={language} niche={niche} islamic={is_islamic}")
@@ -178,7 +186,7 @@ Visual note for this niche: {visual_note}"""
 
     if not text:
         logger.warning("generate_script: Gemini returned empty — using fallback script")
-        return _fallback_script(idea, language)
+        return _fallback_script(idea, language, video_type)
 
     try:
         data = json.loads(_clean_json(text))
@@ -189,10 +197,12 @@ Visual note for this niche: {visual_note}"""
     except json.JSONDecodeError as exc:
         logger.warning(f"generate_script: Gemini response not valid JSON ({exc}) — using fallback. First 200 chars: {text[:200]!r}")
 
-    return _fallback_script(idea, language)
+    return _fallback_script(idea, language, video_type)
 
 
-def _fallback_script(idea: str, language: str) -> dict:
+def _fallback_script(idea: str, language: str, video_type: str = "explainer") -> dict:
+    fallback_scene_count = 10 if video_type == "short_form" else 28 if video_type == "long_form" else 8
+    fallback_scene_duration = 5 if video_type == "short_form" else 12 if video_type == "long_form" else 8
     return {
         "title": idea[:70],
         "description": f"Explore the fascinating topic of {idea}.",
@@ -206,14 +216,14 @@ def _fallback_script(idea: str, language: str) -> dict:
                 "order": i + 1,
                 "script_text": f"Scene {i+1} narration about {idea}.",
                 "script_ar": None,
-                "duration": 8,
-                "visual_query": idea,
+                "duration": fallback_scene_duration,
+                "visual_query": f"{idea} scene {i+1} visual",
                 "visual_type": "stock",
                 "transition": "fade",
                 "effects": [],
                 "on_screen_source": None,
             }
-            for i in range(8)
+            for i in range(fallback_scene_count)
         ],
     }
 

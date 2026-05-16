@@ -3,7 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { Lightbulb, Sparkles, ArrowRight, Loader2 } from 'lucide-react'
-import { suggestIdeas, quickGenerate, getVideoTypes } from '../services/api'
+import { suggestIdeas, quickGenerate } from '../services/api'
 import useStore from '../store/useStore'
 
 const NICHES = [
@@ -38,10 +38,8 @@ export default function Ideas() {
   const [title, setTitle]       = useState('')
   const [niche, setNiche]       = useState('educational')
   const [language, setLanguage] = useState('en')
-  const [videoType, setVideoType] = useState('explainer')
+  const [videoType, setVideoType] = useState('')
   const [suggestions, setSuggestions] = useState([])
-
-  const { data: videoTypes = [] } = useQuery({ queryKey: ['videoTypes'], queryFn: getVideoTypes })
 
   const tone = TONE_BY_NICHE[niche] || 'educational'
   const isIslamic = niche === 'islamic'
@@ -117,7 +115,7 @@ export default function Ideas() {
               <div
                 key={i}
                 className="flex items-start gap-3 bg-surface-700 rounded-lg p-3 cursor-pointer hover:bg-surface-600 transition-colors"
-                onClick={() => { setTitle(s.title); setVideoType(s.video_type) }}
+                onClick={() => { setTitle(s.title) }}
               >
                 <Lightbulb size={16} className="text-yellow-400 mt-0.5 shrink-0" />
                 <div>
@@ -174,9 +172,9 @@ export default function Ideas() {
 
       {/* Video Type */}
       <div className="card mb-6">
-        <label className="label">Video Type</label>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {videoTypes.map((t) => (
+        <label className="label">Video Type *</label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {[{ id: 'short_form', label: 'Short / Reel / TikTok' }, { id: 'long_form', label: 'Long YouTube Video' }].map((t) => (
             <button
               key={t.id}
               onClick={() => setVideoType(t.id)}
@@ -187,7 +185,6 @@ export default function Ideas() {
               }`}
             >
               <div className="font-medium">{t.label}</div>
-              <div className="text-xs opacity-70">{t.label_ar}</div>
             </button>
           ))}
         </div>
@@ -195,7 +192,7 @@ export default function Ideas() {
 
       <button
         className="btn-primary w-full text-base py-3"
-        disabled={!title.trim() || generateMutation.isPending}
+        disabled={!title.trim() || !videoType || generateMutation.isPending}
         onClick={() => generateMutation.mutate()}
       >
         {generateMutation.isPending
