@@ -178,6 +178,18 @@ async def compose_video(
 ) -> bool:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     w, h = DIMENSIONS.get(aspect_ratio, (1920, 1080))
+    allow_placeholder_render = bool(subtitle_config and subtitle_config.get("diagnostic_render"))
+
+    logger.info("compose_video received %s scenes", len(scenes))
+    for idx, scene in enumerate(scenes, start=1):
+        logger.info(
+            "compose_video scene[%s]: order=%s visual_url=%s visual_status=%s duration=%s",
+            idx,
+            scene.get("order"),
+            scene.get("visual_url"),
+            scene.get("visual_status"),
+            scene.get("duration"),
+        )
 
     # 1. Build ordered list of video clips with their target durations
     clips = []
@@ -190,11 +202,40 @@ async def compose_video(
     for scene in scenes:
         vurl = scene.get("visual_url", "")
         scene_duration = float(scene.get("duration", 10) or 10)
+        scene_id = scene.get("id")
+        scene_order = scene.get("order")
 
-        if not vurl or not os.path.exists(vurl):
+        if not vurl:
+            logger.warning(
+                "scene visual missing: scene_id=%s order=%s visual_url=%s exists=%s",
+                scene_id,
+                scene_order,
+                vurl,
+                False,
+            )
+            continue
+
+        visual_exists = os.path.exists(vurl)
+        visual_size = os.path.getsize(vurl) if visual_exists else 0
+        if not visual_exists:
+            logger.warning(
+                "scene visual missing: scene_id=%s order=%s visual_url=%s exists=%s",
+                scene_id,
+                scene_order,
+                vurl,
+                visual_exists,
+            )
             continue
 
         scene_clips = []
+        logger.info(
+            "scene visual found: scene_id=%s order=%s path=%s exists=%s size_bytes=%s",
+            scene_id,
+            scene_order,
+            vurl,
+            visual_exists,
+            visual_size,
+        )
 
         folder = os.path.dirname(vurl)
         filename = os.path.basename(vurl)
@@ -222,6 +263,25 @@ async def compose_video(
         clip_count = max(len(scene_clips), 1)
         per_clip_duration = scene_duration / clip_count
         for idx, clip in enumerate(scene_clips):
+            clip_exists = os.path.exists(clip)
+            clip_size = os.path.getsize(clip) if clip_exists else 0
+            if clip_exists:
+                logger.info(
+                    "scene visual found: scene_id=%s order=%s path=%s exists=%s size_bytes=%s",
+                    scene_id,
+                    scene_order,
+                    clip,
+                    clip_exists,
+                    clip_size,
+                )
+            else:
+                logger.warning(
+                    "scene visual missing: scene_id=%s order=%s visual_url=%s exists=%s",
+                    scene_id,
+                    scene_order,
+                    clip,
+                    clip_exists,
+                )
             # Keep exact scene timing by distributing rounding remainder to final clip.
             if idx == clip_count - 1:
                 duration = max(
@@ -238,9 +298,12 @@ async def compose_video(
         clip_durations.append(5)
 
     if not clips:
-        logger.warning("No video clips available — creating placeholder")
-        await _create_placeholder(output_path, w, h)
-        return True
+        logger.error("No valid scene visual clips found — refusing placeholder render")
+        if allow_placeholder_render:
+            logger.warning("Diagnostic placeholder render enabled; generating placeholder output")
+            await _create_placeholder(output_path, w, h)
+            return True
+        return False
 
     # 2. Normalize each clip to the target resolution
     normalized = []
