@@ -163,17 +163,22 @@ def probe_media_duration(path: str) -> float:
 def _valid_final_output(path: str) -> bool:
     """Validate final render output by existence, size threshold, and duration."""
     if not os.path.exists(path):
-        logger.error("output missing")
+        logger.error("output missing: candidate_path=%s", path)
         return False
 
     size = os.path.getsize(path)
     if size < MIN_FINAL_OUTPUT_SIZE_BYTES:
-        logger.error("output too small")
+        logger.error("output too small: candidate_path=%s size_bytes=%s", path, size)
         return False
 
     duration = _probe_duration(path)
     if duration <= 0.5:
-        logger.error("output duration invalid")
+        logger.error(
+            "output duration invalid: candidate_path=%s size_bytes=%s duration_seconds=%.3f",
+            path,
+            size,
+            duration,
+        )
         return False
 
     return True
@@ -728,15 +733,42 @@ async def compose_video(
     if audio_ok or bg_ok:
         cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
 
-    cmd += ["-movflags", "+faststart", output_path]
+    final_candidate_path = output_path + ".tmp.mp4"
+    cmd += ["-movflags", "+faststart", final_candidate_path]
 
     ok, err = await _run_async(cmd)
-
-    if not ok or not _valid_final_output(output_path):
-        logger.info("trying mpeg4 final render fallback")
-        if os.path.exists(output_path):
+    candidate_exists = os.path.exists(final_candidate_path)
+    candidate_size = os.path.getsize(final_candidate_path) if candidate_exists else 0
+    candidate_duration = _probe_duration(final_candidate_path) if candidate_exists else 0.0
+    logger.info(
+        "libx264 final render output stats: candidate_path=%s exists=%s size_bytes=%s duration_seconds=%.3f return_ok=%s",
+        final_candidate_path,
+        candidate_exists,
+        candidate_size,
+        candidate_duration,
+        ok,
+    )
+    final_valid = _valid_final_output(final_candidate_path)
+    if final_valid:
+        try:
+            os.replace(final_candidate_path, output_path)
+        except OSError as move_err:
+            logger.error(f"failed moving validated final output candidate: {move_err}")
+            final_valid = False
+        else:
+            logger.info("final output candidate validated and moved to output_path")
+    else:
+        if candidate_exists:
             try:
-                os.remove(output_path)
+                os.remove(final_candidate_path)
+            except OSError:
+                pass
+
+    if not ok or not final_valid:
+        logger.info("trying mpeg4 final render fallback")
+        if os.path.exists(final_candidate_path):
+            try:
+                os.remove(final_candidate_path)
             except OSError:
                 pass
 
@@ -764,27 +796,102 @@ async def compose_video(
         if audio_ok or bg_ok:
             mpeg4_cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
 
-        mpeg4_cmd += [output_path]
+        mpeg4_cmd += [final_candidate_path]
 
         ok, err = await _run_async(mpeg4_cmd)
-        fallback_exists = os.path.exists(output_path)
-        fallback_size = os.path.getsize(output_path) if fallback_exists else 0
-        fallback_duration = _probe_duration(output_path) if fallback_exists else 0.0
+        fallback_exists = os.path.exists(final_candidate_path)
+        fallback_size = os.path.getsize(final_candidate_path) if fallback_exists else 0
+        fallback_duration = _probe_duration(final_candidate_path) if fallback_exists else 0.0
         logger.info(
-            "mpeg4 final fallback output stats: exists=%s size_bytes=%s duration_seconds=%.3f return_ok=%s",
+            "mpeg4 final fallback output stats: candidate_path=%s exists=%s size_bytes=%s duration_seconds=%.3f return_ok=%s",
+            final_candidate_path,
             fallback_exists,
             fallback_size,
             fallback_duration,
             ok,
         )
-        fallback_valid = _valid_final_output(output_path)
+        fallback_valid = _valid_final_output(final_candidate_path)
         if fallback_valid and not ok:
             logger.info("final output exists and passed validation despite ffmpeg return code")
+        if fallback_valid:
+            try:
+                os.replace(final_candidate_path, output_path)
+            except OSError as move_err:
+                logger.error(f"failed moving validated final output candidate: {move_err}")
+                fallback_valid = False
+            else:
+                logger.info("final output candidate validated and moved to output_path")
+        else:
+            if fallback_exists:
+                try:
+                    os.remove(final_candidate_path)
+                except OSError:
+                    pass
         ok = fallback_valid
         if fallback_valid:
             logger.info("mpeg4 final render fallback succeeded")
         else:
             logger.error(f"mpeg4 final render fallback failed: {(err or '')[-500:]}")
+
+    if not ok:
+        logger.info("trying video-only final render fallback")
+        if os.path.exists(final_candidate_path):
+            try:
+                os.remove(final_candidate_path)
+            except OSError:
+                pass
+
+        video_only_cmd = ["ffmpeg", "-y", "-i", concat_path]
+        if filter_parts:
+            video_only_cmd += ["-filter_complex", ";".join(filter_parts)]
+            video_only_cmd += ["-map", video_stream]
+        else:
+            video_only_cmd += ["-map", "0:v"]
+        video_only_cmd += [
+            "-c:v",
+            "mpeg4",
+            "-q:v",
+            "5",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            "30",
+            final_candidate_path,
+        ]
+
+        video_only_ok, video_only_err = await _run_async(video_only_cmd)
+        vo_exists = os.path.exists(final_candidate_path)
+        vo_size = os.path.getsize(final_candidate_path) if vo_exists else 0
+        vo_duration = _probe_duration(final_candidate_path) if vo_exists else 0.0
+        logger.info(
+            "video-only final fallback output stats: candidate_path=%s exists=%s size_bytes=%s duration_seconds=%.3f return_ok=%s",
+            final_candidate_path,
+            vo_exists,
+            vo_size,
+            vo_duration,
+            video_only_ok,
+        )
+
+        video_only_valid = _valid_final_output(final_candidate_path)
+        if video_only_valid:
+            try:
+                os.replace(final_candidate_path, output_path)
+            except OSError as move_err:
+                logger.error(f"failed moving validated final output candidate: {move_err}")
+                video_only_valid = False
+            else:
+                logger.info("final output candidate validated and moved to output_path")
+                logger.info("video-only final render fallback succeeded")
+        else:
+            if vo_exists:
+                try:
+                    os.remove(final_candidate_path)
+                except OSError:
+                    pass
+            logger.error(f"video-only final render fallback failed: {(video_only_err or '')[-500:]}")
+            logger.info("video-only final render fallback failed")
+
+        ok = video_only_valid
 
     # Cleanup temp files
     for f in normalized + [concat_file, concat_path]:
