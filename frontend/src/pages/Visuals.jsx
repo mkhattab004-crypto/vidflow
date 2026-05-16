@@ -57,6 +57,7 @@ export default function Visuals() {
 
   const gaps = gapAnalysis?.scenes || []
   const totalFilled = gaps.filter((g) => g.visual_url).length
+  const islamicVisualSafety = Boolean(project?.is_islamic || (project?.niche || '').toLowerCase().includes('islam'))
 
   return (
     <div>
@@ -64,6 +65,7 @@ export default function Visuals() {
         <div>
           <h1 className="page-title">Visuals — {project?.title}</h1>
           <p className="page-subtitle">{totalFilled}/{gaps.length} scenes filled</p>
+          {islamicVisualSafety && <p className="text-xs text-emerald-300 mt-1">Visual Safety Profile: Islamic</p>}
         </div>
         <div className="flex gap-2">
           <button className="btn-secondary" onClick={() => setActiveProjectId(null)}>Change Project</button>
