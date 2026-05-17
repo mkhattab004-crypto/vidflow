@@ -258,7 +258,12 @@ async def download_video(project_id: str, format: str = "16:9", db: AsyncSession
         "9:16": project.output_9_16_url,
         "1:1":  project.output_1_1_url,
     }
-    path = path_map.get(format, project.output_url)
+    if format not in path_map:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid format. Supported values: 16:9, 9:16, 1:1",
+        )
+    path = path_map[format]
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Video file not found — please render first")
     safe_title = "".join(c for c in project.title if c.isalnum() or c in " -_")[:50]

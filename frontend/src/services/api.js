@@ -3,10 +3,10 @@ import axios from 'axios'
 // VITE_API_URL can be set as a Railway build-time env var to call the backend
 // directly (e.g. https://vidflow-production-727a.up.railway.app/api).
 // Falls back to /api which is handled by the nginx proxy.
-const BASE_URL = 'https://vidflow-production-727a.up.railway.app/api'
+export const API_BASE_URL = 'https://vidflow-production-727a.up.railway.app/api'
 
 const api = axios.create({
-  baseURL: BASE_URL,
+  baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
   timeout: 180000, // 3 minutes — Gemini script generation can take 60-120s
 })
@@ -99,7 +99,9 @@ export const previewVoiceUrl   = (text, voice, speed) =>
 export const renderVideo       = (data)       => api.post('/video/render', data).then(r => r.data)
 export const renderAllFormats  = (data)       => api.post('/video/render-all-formats', data).then(r => r.data)
 export const getRenderStatus   = (id)         => api.get(`/video/status/${id}`).then(r => r.data)
-export const videoDownloadUrl  = (id, fmt)    => `/api/video/download/${id}?format=${encodeURIComponent(fmt)}`
+export const getVideoDownloadUrl = (projectId, format) =>
+  `${API_BASE_URL}/video/download/${projectId}?format=${encodeURIComponent(format)}`
+export const videoDownloadUrl  = getVideoDownloadUrl
 
 // ── Thumbnails ────────────────────────────────────────────────────────────────
 
@@ -124,6 +126,13 @@ export async function downloadSubtitles(id, format = 'srt', useAudioTiming = fal
   downloadBlob(r.data, `${id}_subtitles.${format}`)
 }
 export const getFullBundle = (id) => api.get(`/export/${id}/full-bundle`).then(r => r.data)
+export const getTextDownloadUrl = (projectId, type) => {
+  if (type === 'metadata') return `${API_BASE_URL}/export/${projectId}/metadata`
+  if (type === 'script') return `${API_BASE_URL}/export/${projectId}/script`
+  if (type === 'subtitles_srt') return `${API_BASE_URL}/export/${projectId}/subtitles?format=srt`
+  if (type === 'subtitles_txt') return `${API_BASE_URL}/export/${projectId}/subtitles?format=txt`
+  return null
+}
 
 // ── Islamic ───────────────────────────────────────────────────────────────────
 
