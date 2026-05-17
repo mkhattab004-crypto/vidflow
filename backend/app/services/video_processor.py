@@ -184,13 +184,12 @@ def _valid_final_output(path: str) -> bool:
     return True
 
 
-def _scale_filter(w: int, h: int) -> str:
-    """Return an FFmpeg scale+pad filter that fills the frame without distortion."""
-    return (
-        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,"
-        f"setsar=1"
-    )
+def _scale_filter(w: int, h: int, aspect_ratio: str) -> tuple[str, str, bool]:
+    """Return FFmpeg scaling filter and metadata for target output format."""
+    crop_fill = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1"
+    if aspect_ratio in {"9:16", "1:1"}:
+        return crop_fill, "crop_fill", False
+    return crop_fill, "crop_fill", False
 
 
 async def compose_video(
@@ -209,7 +208,17 @@ async def compose_video(
     w, h = DIMENSIONS.get(aspect_ratio, (1920, 1080))
     allow_placeholder_render = bool(subtitle_config and subtitle_config.get("diagnostic_render"))
 
-    logger.info("compose_video received %s scenes", len(scenes))
+    scale_filter, scale_mode, black_bars_allowed = _scale_filter(w, h, aspect_ratio)
+    logger.info(
+        "compose_video received %s scenes project_video_type=%s output_format=%s target_format_size=%sx%s scale_mode=%s black_bars_allowed=%s",
+        len(scenes),
+        scenes[0].get("project_video_type") if scenes else None,
+        aspect_ratio,
+        w,
+        h,
+        scale_mode,
+        black_bars_allowed,
+    )
     for idx, scene in enumerate(scenes, start=1):
         logger.info(
             "compose_video scene[%s]: order=%s visual_url=%s visual_status=%s duration=%s",
@@ -230,7 +239,7 @@ async def compose_video(
 
     for scene in scenes:
         vurl = scene.get("visual_url", "")
-        scene_duration = float(scene.get("duration", 10) or 10)
+        scene_duration = float(scene.get("audio_duration", scene.get("duration", 10)) or 10)
         scene_id = scene.get("id")
         scene_order = scene.get("order")
 
@@ -321,6 +330,13 @@ async def compose_video(
                 duration = max(per_clip_duration, MIN_NORMALIZED_DURATION_SECONDS)
             clips.append(clip)
             clip_durations.append(duration)
+            logger.info(
+                "scene_duration_allocated scene_id=%s scene_order=%s scene_audio_duration_seconds=%.3f scene_visual_duration_seconds=%.3f",
+                scene_id,
+                scene_order,
+                scene_duration,
+                duration,
+            )
 
     if outro_path and os.path.exists(outro_path):
         clips.append(outro_path)
@@ -355,7 +371,7 @@ async def compose_video(
                 "-t",
                 str(duration),
                 "-vf",
-                f"{_scale_filter(w, h)},format=yuv420p",
+                f"{scale_filter},format=yuv420p",
                 "-an",
                 "-c:v",
                 "libx264",
@@ -394,8 +410,7 @@ async def compose_video(
                     clip,
                     "-filter_complex",
                     (
-                        f"[1:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black,format=rgba[img];"
+                        f"[1:v]{scale_filter},format=rgba[img];"
                         f"[0:v][img]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]"
                     ),
                     "-map",
@@ -445,7 +460,7 @@ async def compose_video(
                         "-t",
                         str(duration),
                         "-vf",
-                        f"{_scale_filter(w, h)},format=yuv420p",
+                        f"{scale_filter},format=yuv420p",
                         "-an",
                         "-c:v",
                         "mpeg4",
@@ -479,25 +494,17 @@ async def compose_video(
                 f"(duration={clip_actual_duration:.3f}s)"
             )
             continue
-        if clip_actual_duration > 0:
-            duration = min(duration, clip_actual_duration)
-
-        if duration < MIN_VALID_CLIP_PROBE_SECONDS:
-            logger.warning(
-                f"Skipping clip due to normalization duration too short: {clip} "
-                f"(target={duration:.3f}s)"
-            )
-            continue
-
         normal_cmd = [
             "ffmpeg",
             "-y",
+            "-stream_loop",
+            "-1",
             "-i",
             clip,
             "-t",
             str(duration),
             "-vf",
-            _scale_filter(w, h),
+            scale_filter,
             "-r",
             "30",
             "-an",
@@ -541,7 +548,7 @@ async def compose_video(
             "-t",
             str(duration),
             "-vf",
-            _scale_filter(w, h),
+            scale_filter,
             "-r",
             "30",
             "-an",
@@ -581,7 +588,7 @@ async def compose_video(
                 "-t",
                 str(duration),
                 "-vf",
-                _scale_filter(w, h),
+                scale_filter,
                 "-r",
                 "30",
                 "-an",
@@ -664,7 +671,7 @@ async def compose_video(
             logger.error("mpeg4 concat fallback failed")
             return False
 
-    # 4. Build final command with audio, subtitles, logo
+    # 4. Build final video-only command with subtitles/logo, then mux audio
     inputs = ["-i", concat_path]
     filter_parts = []
     audio_ok = audio_path and os.path.exists(audio_path)
@@ -692,21 +699,6 @@ async def compose_video(
         filter_parts.append(f"{video_stream}subtitles={srt_path}:force_style='{sub_style}'[vsub]")
         video_stream = "[vsub]"
 
-    # Audio mix
-    audio_map = []
-    if audio_ok and bg_ok:
-        a_idx = inputs.index(audio_path) // 2
-        bg_idx = inputs.index(bg_music_path) // 2
-        filter_parts.append(
-            f"[{a_idx}:a]volume=1.0[main];"
-            f"[{bg_idx}:a]volume=0.12,aloop=loop=-1:size=2e+09[bg];"
-            f"[main][bg]amix=inputs=2:duration=first[aout]"
-        )
-        audio_map = ["-map", "[aout]"]
-    elif audio_ok:
-        a_idx = inputs.index(audio_path) // 2
-        audio_map = ["-map", f"{a_idx}:a"]
-
     cmd = ["ffmpeg", "-y"] + inputs
 
     if filter_parts:
@@ -714,8 +706,6 @@ async def compose_video(
         cmd += ["-map", video_stream]
     else:
         cmd += ["-map", "0:v"]
-
-    cmd += audio_map
 
     cmd += [
         "-c:v",
@@ -729,9 +719,6 @@ async def compose_video(
         "-r",
         "30",
     ]
-
-    if audio_ok or bg_ok:
-        cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
 
     final_candidate_path = output_path + ".tmp.mp4"
     cmd += ["-movflags", "+faststart", final_candidate_path]
@@ -780,8 +767,6 @@ async def compose_video(
         else:
             mpeg4_cmd += ["-map", "0:v"]
 
-        mpeg4_cmd += audio_map
-
         mpeg4_cmd += [
             "-c:v",
             "mpeg4",
@@ -792,9 +777,6 @@ async def compose_video(
             "-r",
             "30",
         ]
-
-        if audio_ok or bg_ok:
-            mpeg4_cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
 
         mpeg4_cmd += [final_candidate_path]
 
@@ -908,6 +890,27 @@ async def compose_video(
         logger.error(f"Final video file invalid: {output_path}")
         return False
 
+    final_visual_duration = _probe_duration(output_path)
+    final_audio_duration = _probe_duration(audio_path) if audio_ok and os.path.exists(audio_path) else 0.0
+    duration_delta = abs(final_visual_duration - final_audio_duration) if final_audio_duration > 0 else 0.0
+    logger.info(
+        "duration metrics total_visual_duration_seconds=%.3f combined_narration_duration_seconds=%.3f final_visual_duration_seconds=%.3f final_audio_duration_seconds=%.3f duration_sync_status=%s",
+        sum(clip_durations),
+        final_audio_duration,
+        final_visual_duration,
+        final_audio_duration,
+        "in_sync" if duration_delta <= 0.5 else "out_of_sync",
+    )
+
+    if final_audio_duration > 0 and duration_delta > 0.5:
+        sync_path = output_path + ".sync.mp4"
+        sync_cmd = ["ffmpeg", "-y", "-i", output_path, "-t", str(final_audio_duration), "-c:v", "copy", sync_path]
+        sync_ok, _ = await _run_async(sync_cmd)
+        if sync_ok and _valid_final_output(sync_path):
+            os.replace(sync_path, output_path)
+            final_visual_duration = _probe_duration(output_path)
+            logger.info("duration sync corrected final_visual_duration_seconds=%.3f", final_visual_duration)
+
     if audio_ok and os.path.exists(audio_path):
         mux_ok = await _mux_audio_into_video(output_path, audio_path, output_path)
         if not mux_ok:
@@ -932,7 +935,8 @@ async def _mux_audio_into_video(video_path: str, audio_path: str, output_path: s
     temp_out = output_path + ".mux.tmp.mp4"
     cmd = [
         "ffmpeg", "-y", "-i", video_path, "-i", audio_path,
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", temp_out
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", temp_out
     ]
     ok, err = await _run_async(cmd)
     if not ok:

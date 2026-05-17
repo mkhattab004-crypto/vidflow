@@ -87,6 +87,20 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 }
                 for s in scenes
             ]
+            if project.audio_url and os.path.exists(project.audio_url):
+                timings = await generate_scene_timings(
+                    [{"id": s.id, "script_text": s.script_text or "", "duration": s.duration, "order": s.order} for s in scenes],
+                    project.voice_id or "",
+                    project.audio_speed,
+                    project_id,
+                )
+                timing_by_id = {t.get("id"): t for t in timings}
+                for scene in scenes_data:
+                    timing = timing_by_id.get(scene.get("id"))
+                    if timing:
+                        scene["audio_duration"] = float(timing.get("actual_duration", scene.get("duration", 5)) or 5)
+                        scene["duration"] = scene["audio_duration"]
+                    scene["project_video_type"] = project.video_type
             logger.info("rendering format=%s project_id=%s", aspect_ratio, project_id)
             logger.info("Sending %s scenes to compose_video for project %s", len(scenes_data), project_id)
             for scene in scenes_data:
