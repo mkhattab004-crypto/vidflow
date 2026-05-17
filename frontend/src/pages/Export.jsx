@@ -2,7 +2,7 @@ import React from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { Download, FileText, Subtitles, FileJson, Video, Monitor, Smartphone, Square } from 'lucide-react'
-import { getProjects, getProject, renderAllFormats, videoDownloadUrl } from '../services/api'
+import { getProjects, getProject, renderAllFormats, getVideoDownloadUrl, getTextDownloadUrl } from '../services/api'
 import useStore from '../store/useStore'
 import api from '../services/api'
 
@@ -38,20 +38,20 @@ const renderMutation = useMutation({
     try {
       let res, filename
       if (type === 'metadata') {
-        res = await api.get(`/export/${activeProjectId}/metadata`, { responseType: 'blob' })
+        res = await api.get(getTextDownloadUrl(activeProjectId, 'metadata'), { responseType: 'blob' })
         filename = `metadata.json`
       } else if (type === 'script') {
-        res = await api.get(`/export/${activeProjectId}/script`, { responseType: 'blob' })
+        res = await api.get(getTextDownloadUrl(activeProjectId, 'script'), { responseType: 'blob' })
         filename = `script.txt`
       } else if (type === 'subtitles_srt') {
-        res = await api.get(`/export/${activeProjectId}/subtitles`, { params: { format: 'srt' }, responseType: 'blob' })
+        res = await api.get(getTextDownloadUrl(activeProjectId, 'subtitles_srt'), { responseType: 'blob' })
         filename = `subtitles.srt`
       } else if (type === 'subtitles_txt') {
-        res = await api.get(`/export/${activeProjectId}/subtitles`, { params: { format: 'txt' }, responseType: 'blob' })
+        res = await api.get(getTextDownloadUrl(activeProjectId, 'subtitles_txt'), { responseType: 'blob' })
         filename = `captions.txt`
       } else if (type.startsWith('video_')) {
         const fmt = type.replace('video_', '').replace('x', ':')
-       window.open(videoDownloadUrl(activeProjectId, fmt), '_blank')
+       window.open(getVideoDownloadUrl(activeProjectId, fmt), '_blank')
         return
       }
       if (res) downloadBlob(res.data, filename)
