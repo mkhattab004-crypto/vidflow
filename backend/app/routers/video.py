@@ -39,7 +39,7 @@ class RenderRequest(BaseModel):
 
 class MultiFormatRequest(BaseModel):
     project_id: str
-    formats: list[str] = ["16:9"]
+    formats: list[str] = ["16:9", "9:16", "1:1"]
 
 
 async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
@@ -85,6 +85,7 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 }
                 for s in scenes
             ]
+            logger.info("rendering format=%s project_id=%s", aspect_ratio, project_id)
             logger.info("Sending %s scenes to compose_video for project %s", len(scenes_data), project_id)
             for scene in scenes_data:
                 logger.info(
@@ -123,10 +124,13 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
             if ok:
                 if aspect_ratio == "16:9":
                     project.output_url = output_path
+                    logger.info("output_url saved for format=%s field=output_url path=%s", aspect_ratio, output_path)
                 elif aspect_ratio == "9:16":
                     project.output_9_16_url = output_path
+                    logger.info("output_url saved for format=%s field=output_9_16_url path=%s", aspect_ratio, output_path)
                 elif aspect_ratio == "1:1":
                     project.output_1_1_url = output_path
+                    logger.info("output_url saved for format=%s field=output_1_1_url path=%s", aspect_ratio, output_path)
                 project.status = "rendered"
                 final_output_duration_seconds = probe_media_duration(output_path)
                 logger.info(
@@ -138,7 +142,7 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                     len(scenes_data),
                     final_output_duration_seconds,
                 )
-                logger.info(f"Render complete: {project.title} ({aspect_ratio})")
+                logger.info("render format succeeded project_id=%s format=%s title=%s", project_id, aspect_ratio, project.title)
                 await db.commit()
 
                 # Notify n8n
@@ -158,13 +162,14 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 project.status = "render_failed"
                 await db.commit()
                 logger.error(
-                    "Render failed during final composition or output validation: %s (%s)",
-                    project.title,
+                    "render format failed project_id=%s format=%s title=%s reason=final_composition_failed",
+                    project_id,
                     aspect_ratio,
+                    project.title,
                 )
 
         except Exception as e:
-            logger.error(f"Render task exception for {project_id}: {e}", exc_info=True)
+            logger.error("render format failed project_id=%s format=%s exception=%s", project_id, aspect_ratio, e, exc_info=True)
             try:
                 project = await db.get(Project, project_id)
                 if project:
@@ -197,11 +202,27 @@ async def render_all_formats(req: MultiFormatRequest, background_tasks: Backgrou
     if not project.review1_approved or not project.review2_approved:
         raise HTTPException(status_code=400, detail="Both reviews must be approved")
 
+    allowed_formats = ["16:9", "9:16", "1:1"]
+    requested_formats = req.formats or allowed_formats
+    valid_formats = [fmt for fmt in requested_formats if fmt in allowed_formats]
+    invalid_formats = [fmt for fmt in requested_formats if fmt not in allowed_formats]
+
+    if not valid_formats:
+        raise HTTPException(status_code=400, detail=f"No valid formats requested. Allowed formats: {allowed_formats}")
+
     project.status = "rendering"
     await db.commit()
-    for fmt in req.formats:
+
+    for fmt in valid_formats:
+        logger.info("queue render format=%s project_id=%s", fmt, req.project_id)
         background_tasks.add_task(_do_render, req.project_id, fmt, False)
-    return {"status": "rendering_started", "formats": req.formats}
+
+    return {
+        "status": "rendering_started",
+        "formats": valid_formats,
+        "invalid_formats": invalid_formats,
+        "message": "Formats are rendering independently; failures in one format will not stop others.",
+    }
 
 
 @router.get("/status/{project_id}")
