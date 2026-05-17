@@ -7,6 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 from typing import Optional
+
+SHORT_FORM_TYPES = {"short_form", "reels", "tiktok", "shorts"}
 from app.database import get_db
 from app.models.project import Project
 from app.services.video_processor import (
@@ -39,7 +41,7 @@ class RenderRequest(BaseModel):
 
 class MultiFormatRequest(BaseModel):
     project_id: str
-    formats: list[str] = ["16:9", "9:16", "1:1"]
+    formats: list[str] | None = None
 
 
 async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
@@ -203,7 +205,8 @@ async def render_all_formats(req: MultiFormatRequest, background_tasks: Backgrou
         raise HTTPException(status_code=400, detail="Both reviews must be approved")
 
     allowed_formats = ["16:9", "9:16", "1:1"]
-    requested_formats = req.formats or allowed_formats
+    default_formats = ["9:16"] if (project.video_type or "").lower() in SHORT_FORM_TYPES else ["16:9"]
+    requested_formats = req.formats or default_formats
     valid_formats = [fmt for fmt in requested_formats if fmt in allowed_formats]
     invalid_formats = [fmt for fmt in requested_formats if fmt not in allowed_formats]
 
@@ -213,14 +216,18 @@ async def render_all_formats(req: MultiFormatRequest, background_tasks: Backgrou
     project.status = "rendering"
     await db.commit()
 
+    format_statuses = []
     for fmt in valid_formats:
         logger.info("queue render format=%s project_id=%s", fmt, req.project_id)
         background_tasks.add_task(_do_render, req.project_id, fmt, False)
+        format_statuses.append({"format": fmt, "status": "queued"})
 
     return {
         "status": "rendering_started",
         "formats": valid_formats,
         "invalid_formats": invalid_formats,
+        "format_statuses": format_statuses,
+        "default_formats": default_formats,
         "message": "Formats are rendering independently; failures in one format will not stop others.",
     }
 

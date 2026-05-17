@@ -2,7 +2,7 @@ import React from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { Download, FileText, Subtitles, FileJson, Video, Monitor, Smartphone, Square } from 'lucide-react'
-import { getProjects, getProject, renderAllFormats } from '../services/api'
+import { getProjects, getProject, renderAllFormats, videoDownloadUrl } from '../services/api'
 import useStore from '../store/useStore'
 import api from '../services/api'
 
@@ -49,7 +49,7 @@ const renderMutation = useMutation({
         filename = `captions.txt`
       } else if (type.startsWith('video_')) {
         const fmt = type.replace('video_', '').replace('x', ':')
-       window.open(`https://vidflow-production-727a.up.railway.app/api/video/download/${activeProjectId}?format=${fmt}`, '_blank')
+       window.open(videoDownloadUrl(activeProjectId, fmt), '_blank')
         return
       }
       if (res) downloadBlob(res.data, filename)
@@ -71,6 +71,8 @@ const renderMutation = useMutation({
 
   const hasVideo = project?.output_url || project?.output_9_16_url || project?.output_1_1_url
   const allApproved = project?.review1_approved && project?.review2_approved && project?.review3_approved
+  const shortFormTypes = new Set(['short_form', 'reels', 'tiktok', 'shorts'])
+  const isShortFormProject = shortFormTypes.has((project?.video_type || '').toLowerCase())
 
   return (
     <div className="max-w-2xl">
@@ -109,11 +111,17 @@ const renderMutation = useMutation({
       <div className="card mb-4">
         <h3 className="section-title flex items-center gap-2"><Video size={16} /> Video Files (1080p HD)</h3>
         <div className="grid grid-cols-3 gap-3">
-          {[
-            { icon: Monitor, label: 'YouTube', sub: '16:9 · 1920×1080', key: 'video_16x9', has: !!project?.output_url },
-            { icon: Smartphone, label: 'TikTok / Reels', sub: '9:16 · 1080×1920', key: 'video_9x16', has: !!project?.output_9_16_url },
-            { icon: Square, label: 'Instagram', sub: '1:1 · 1080×1080', key: 'video_1x1', has: !!project?.output_1_1_url },
-          ].map(({ icon: Icon, label, sub, key, has }) => (
+          {(isShortFormProject
+            ? [
+                { icon: Smartphone, label: 'TikTok / Reels', sub: '9:16 · 1080×1920', key: 'video_9x16', has: !!project?.output_9_16_url },
+                { icon: Monitor, label: 'YouTube', sub: '16:9 · 1920×1080', key: 'video_16x9', has: !!project?.output_url },
+                { icon: Square, label: 'Instagram', sub: '1:1 · 1080×1080', key: 'video_1x1', has: !!project?.output_1_1_url },
+              ]
+            : [
+                { icon: Monitor, label: 'YouTube', sub: '16:9 · 1920×1080', key: 'video_16x9', has: !!project?.output_url },
+                { icon: Smartphone, label: 'TikTok / Reels', sub: '9:16 · 1080×1920', key: 'video_9x16', has: !!project?.output_9_16_url },
+                { icon: Square, label: 'Instagram', sub: '1:1 · 1080×1080', key: 'video_1x1', has: !!project?.output_1_1_url },
+              ]).map(({ icon: Icon, label, sub, key, has }) => (
             <button
               key={key}
               className={`p-4 rounded-xl border text-center transition-all ${has && allApproved ? 'border-green-600/50 bg-green-900/10 hover:bg-green-900/20 cursor-pointer' : 'border-surface-600 opacity-50 cursor-not-allowed'}`}
