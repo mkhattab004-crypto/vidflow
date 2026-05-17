@@ -12,7 +12,7 @@ router = APIRouter(prefix="/visuals", tags=["visuals"])
 
 logger = logging.getLogger(__name__)
 
-ASSET_ROOT = "/tmp/vidflow_assets"
+ASSET_ROOT = "/tmp/vidflow_outputs"
 
 ISLAMIC_DETECTION_KEYWORDS = {
     "islam", "islamic", "quran", "qur'an", "koran", "ayat", "surah", "hadith", "prophet", "allah", "prayer", "salah", "mosque", "ramadan", "dua", "dhikr",
@@ -121,7 +121,7 @@ async def download_visual_asset(url: str, project_id: str, scene_order: int, sou
     if not url.startswith("http"):
         return url if os.path.exists(url) else None
 
-    project_dir = os.path.join(ASSET_ROOT, _safe_name(project_id))
+    project_dir = os.path.join(ASSET_ROOT, _safe_name(project_id), "assets")
     os.makedirs(project_dir, exist_ok=True)
 
     clean_url = url.split("?")[0]
@@ -158,6 +158,133 @@ FALLBACK_ORDER = {
     "islamic": ["pexels_mosque", "wikimedia", "ai_safe", "text"],
     "default": ["pexels", "pixabay", "wikimedia", "text"],
 }
+
+
+async def refill_scene_visual(
+    scene: Scene,
+    project_id: str,
+    is_islamic_profile: bool,
+    used_asset_urls: set[str] | None = None,
+) -> bool:
+    """Refill a scene visual using existing auto-fill search/safety logic."""
+    used_asset_urls = used_asset_urls or set()
+    if not scene.visual_query:
+        scene.visual_status = "missing_query"
+        return False
+
+    downloaded_path = None
+    selected_source = None
+    selected_attribution = None
+
+    query_to_use = scene.visual_query
+    if is_islamic_profile:
+        query_to_use = _rewrite_safe_query(scene.visual_query)
+        logger.info("original_visual_query=%s", scene.visual_query)
+        logger.info("rewritten_safe_query=%s", query_to_use)
+
+    logger.info("trying pexels videos")
+    video_candidates = await pexels.search_videos(query_to_use, per_page=3)
+
+    for candidate in video_candidates:
+        candidate_url = candidate.get("url")
+        candidate_source = candidate.get("source", "unknown")
+        if is_islamic_profile:
+            blocked_reason = _is_blocked_visual_candidate(candidate)
+            if blocked_reason:
+                logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
+                continue
+        if candidate_url in used_asset_urls:
+            logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
+            continue
+        local_path = await download_visual_asset(url=candidate_url, project_id=project_id, scene_order=scene.order, source=candidate_source)
+        if local_path:
+            downloaded_path = local_path
+            selected_source = candidate_source
+            selected_attribution = candidate.get("attribution")
+            logger.info("pexels video selected")
+            break
+
+    if not downloaded_path:
+        logger.info("trying pixabay videos")
+        video_candidates = await pixabay.search_videos(query_to_use, per_page=3)
+        for candidate in video_candidates:
+            candidate_url = candidate.get("url")
+            candidate_source = candidate.get("source", "unknown")
+            if is_islamic_profile:
+                blocked_reason = _is_blocked_visual_candidate(candidate)
+                if blocked_reason:
+                    logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
+                    continue
+            if candidate_url in used_asset_urls:
+                logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
+                continue
+            local_path = await download_visual_asset(url=candidate_url, project_id=project_id, scene_order=scene.order, source=candidate_source)
+            if local_path:
+                downloaded_path = local_path
+                selected_source = candidate_source
+                selected_attribution = candidate.get("attribution")
+                logger.info("pixabay video selected")
+                break
+
+    if not downloaded_path:
+        logger.info("no valid video found, trying photos")
+        photo_candidates = await pexels.search_photos(query_to_use, per_page=3)
+        if not photo_candidates:
+            photo_candidates = await pixabay.search_photos(query_to_use, per_page=3)
+        for candidate in photo_candidates:
+            candidate_url = candidate.get("url")
+            candidate_source = candidate.get("source", "unknown")
+            if is_islamic_profile:
+                blocked_reason = _is_blocked_visual_candidate(candidate)
+                if blocked_reason:
+                    logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
+                    continue
+            if candidate_url in used_asset_urls:
+                logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
+                continue
+            local_path = await download_visual_asset(url=candidate_url, project_id=project_id, scene_order=scene.order, source=candidate_source)
+            if local_path:
+                downloaded_path = local_path
+                selected_source = candidate_source
+                selected_attribution = candidate.get("attribution")
+                logger.info("photo fallback selected")
+                break
+
+    if not downloaded_path and is_islamic_profile:
+        for fallback_query in ISLAMIC_FALLBACK_QUERIES:
+            logger.info("fallback_safe_visual_query=%s", fallback_query)
+            fallback_candidates = await pexels.search_photos(fallback_query, per_page=3)
+            if not fallback_candidates:
+                fallback_candidates = await pixabay.search_photos(fallback_query, per_page=3)
+            for candidate in fallback_candidates:
+                candidate_url = candidate.get("url")
+                blocked_reason = _is_blocked_visual_candidate(candidate)
+                if blocked_reason or candidate_url in used_asset_urls:
+                    if blocked_reason:
+                        logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate.get("source", "unknown"), candidate_url)
+                    continue
+                local_path = await download_visual_asset(url=candidate_url, project_id=project_id, scene_order=scene.order, source=candidate.get("source", "unknown"))
+                if local_path:
+                    downloaded_path = local_path
+                    selected_source = candidate.get("source", "unknown")
+                    selected_attribution = candidate.get("attribution")
+                    break
+            if downloaded_path:
+                break
+
+    if not downloaded_path:
+        scene.visual_status = "needs_ai"
+        return False
+
+    scene.visual_url = downloaded_path
+    scene.visual_source = selected_source if selected_source else "stock"
+    scene.visual_status = "suggested"
+    if selected_attribution:
+        scene.on_screen_source = selected_attribution
+    used_asset_urls.add(scene.visual_url)
+    if is_islamic_profile:
+        logger.info("selected_safe_visual_url=%s", scene.visual_url)
+    return True
 
 
 @router.get("/search")
@@ -222,151 +349,15 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
     used_asset_urls: set[str] = set()
 
     for scene in scenes:
-        if not scene.visual_query:
-            scene.visual_status = "missing_query"
-            failed += 1
-            continue
-
-        downloaded_path = None
-        selected_source = None
-        selected_attribution = None
-
-        query_to_use = scene.visual_query
-        if is_islamic_profile:
-            query_to_use = _rewrite_safe_query(scene.visual_query)
-            logger.info("original_visual_query=%s", scene.visual_query)
-            logger.info("rewritten_safe_query=%s", query_to_use)
-
-        logger.info("trying pexels videos")
-        video_candidates = await pexels.search_videos(query_to_use, per_page=3)
-
-        for candidate in video_candidates:
-            candidate_url = candidate.get("url")
-            candidate_source = candidate.get("source", "unknown")
-            if is_islamic_profile:
-                blocked_reason = _is_blocked_visual_candidate(candidate)
-                if blocked_reason:
-                    logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
-                    continue
-            if candidate_url in used_asset_urls:
-                logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
-                continue
-
-            local_path = await download_visual_asset(
-                url=candidate_url,
-                project_id=project_id,
-                scene_order=scene.order,
-                source=candidate_source,
-            )
-
-            if local_path:
-                downloaded_path = local_path
-                selected_source = candidate_source
-                selected_attribution = candidate.get("attribution")
-                logger.info("pexels video selected")
-                break
-
-        if not downloaded_path:
-            logger.info("trying pixabay videos")
-            video_candidates = await pixabay.search_videos(query_to_use, per_page=3)
-
-            for candidate in video_candidates:
-                candidate_url = candidate.get("url")
-                candidate_source = candidate.get("source", "unknown")
-                if is_islamic_profile:
-                    blocked_reason = _is_blocked_visual_candidate(candidate)
-                    if blocked_reason:
-                        logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
-                        continue
-                if candidate_url in used_asset_urls:
-                    logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
-                    continue
-
-                local_path = await download_visual_asset(
-                    url=candidate_url,
-                    project_id=project_id,
-                    scene_order=scene.order,
-                    source=candidate_source,
-                )
-
-                if local_path:
-                    downloaded_path = local_path
-                    selected_source = candidate_source
-                    selected_attribution = candidate.get("attribution")
-                    logger.info("pixabay video selected")
-                    break
-
-        if not downloaded_path:
-            logger.info("no valid video found, trying photos")
-
-            photo_candidates = await pexels.search_photos(query_to_use, per_page=3)
-
-            if not photo_candidates:
-                photo_candidates = await pixabay.search_photos(query_to_use, per_page=3)
-
-            for candidate in photo_candidates:
-                candidate_url = candidate.get("url")
-                candidate_source = candidate.get("source", "unknown")
-                if is_islamic_profile:
-                    blocked_reason = _is_blocked_visual_candidate(candidate)
-                    if blocked_reason:
-                        logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
-                        continue
-                if candidate_url in used_asset_urls:
-                    logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
-                    continue
-
-                local_path = await download_visual_asset(
-                    url=candidate_url,
-                    project_id=project_id,
-                    scene_order=scene.order,
-                    source=candidate_source,
-                )
-
-                if local_path:
-                    downloaded_path = local_path
-                    selected_source = candidate_source
-                    selected_attribution = candidate.get("attribution")
-                    logger.info("photo fallback selected")
-                    break
-
-        if not downloaded_path and is_islamic_profile:
-            for fallback_query in ISLAMIC_FALLBACK_QUERIES:
-                logger.info("fallback_safe_visual_query=%s", fallback_query)
-                fallback_candidates = await pexels.search_photos(fallback_query, per_page=3)
-                if not fallback_candidates:
-                    fallback_candidates = await pixabay.search_photos(fallback_query, per_page=3)
-                for candidate in fallback_candidates:
-                    candidate_url = candidate.get("url")
-                    blocked_reason = _is_blocked_visual_candidate(candidate)
-                    if blocked_reason or candidate_url in used_asset_urls:
-                        if blocked_reason:
-                            logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate.get("source", "unknown"), candidate_url)
-                        continue
-                    local_path = await download_visual_asset(url=candidate_url, project_id=project_id, scene_order=scene.order, source=candidate.get("source", "unknown"))
-                    if local_path:
-                        downloaded_path = local_path
-                        selected_source = candidate.get("source", "unknown")
-                        selected_attribution = candidate.get("attribution")
-                        break
-                if downloaded_path:
-                    break
-
-        if downloaded_path:
-            scene.visual_url = downloaded_path
-            scene.visual_source = selected_source if selected_source else "stock"
-            scene.visual_status = "suggested"
-
-            if selected_attribution:
-                scene.on_screen_source = selected_attribution
-
-            if scene.visual_url:
-                used_asset_urls.add(scene.visual_url)
-                if is_islamic_profile:
-                    logger.info("selected_safe_visual_url=%s", scene.visual_url)
+        ok = await refill_scene_visual(
+            scene=scene,
+            project_id=project_id,
+            is_islamic_profile=is_islamic_profile,
+            used_asset_urls=used_asset_urls,
+        )
+        if ok:
             filled += 1
         else:
-            scene.visual_status = "needs_ai"
             failed += 1
 
     await db.commit()
