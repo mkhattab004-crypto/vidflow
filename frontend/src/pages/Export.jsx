@@ -20,10 +20,12 @@ export default function Export() {
   const qc = useQueryClient()
   const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: () => getProjects() })
   const { data: project } = useQuery({ queryKey: ['project', activeProjectId], queryFn: () => getProject(activeProjectId), enabled: !!activeProjectId })
+  const shortFormTypes = new Set(['short_form', 'reels', 'tiktok', 'shorts'])
+  const isShortFormProject = shortFormTypes.has((project?.video_type || '').toLowerCase())
 const renderMutation = useMutation({
   mutationFn: () => renderAllFormats({
     project_id: activeProjectId,
-    formats: ['16:9', '9:16', '1:1'],
+    formats: isShortFormProject ? ['9:16', '16:9', '1:1'] : ['16:9', '9:16', '1:1'],
   }),
   onSuccess: () => {
     toast.success('Video rendering started! Refresh after a minute.')
@@ -71,9 +73,6 @@ const renderMutation = useMutation({
 
   const hasVideo = project?.output_url || project?.output_9_16_url || project?.output_1_1_url
   const allApproved = project?.review1_approved && project?.review2_approved && project?.review3_approved
-  const shortFormTypes = new Set(['short_form', 'reels', 'tiktok', 'shorts'])
-  const isShortFormProject = shortFormTypes.has((project?.video_type || '').toLowerCase())
-
   return (
     <div className="max-w-2xl">
       <h1 className="page-title">Export — {project?.title}</h1>
