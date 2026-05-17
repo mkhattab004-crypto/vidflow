@@ -21,6 +21,11 @@ from app.services.video_processor import (
 from app.services.audio_assembler import generate_scene_timings
 from app.services.n8n_service import notify_video_ready
 from app.config import settings
+from app.routers.visuals import (
+    _detect_islamic_visual_profile,
+    refill_scene_visual,
+    download_visual_asset,
+)
 
 
 def _static_to_fs(url: Optional[str]) -> Optional[str]:
@@ -65,6 +70,81 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
 
             scenes = sorted(project.scenes, key=lambda s: s.order)
             channel = project.channel
+            is_islamic_profile = _detect_islamic_visual_profile(project, scenes)
+
+            recovered_scene_count = 0
+            unrecovered_scene_count = 0
+            for scene in scenes:
+                vurl = scene.visual_url or ""
+                is_local_path = bool(vurl) and not vurl.startswith("http://") and not vurl.startswith("https://")
+                missing_local = is_local_path and not os.path.exists(vurl)
+                if not missing_local:
+                    continue
+
+                logger.warning(
+                    "scene visual missing: scene_id=%s order=%s visual_url=%s",
+                    scene.id,
+                    scene.order,
+                    scene.visual_url,
+                )
+                logger.info(
+                    "recovering missing visual asset: scene_id=%s order=%s visual_url=%s",
+                    scene.id,
+                    scene.order,
+                    scene.visual_url,
+                )
+
+                recovered = False
+                source_url = None
+                for candidate_source_url in (scene.visual_source, scene.on_screen_source):
+                    if (candidate_source_url or "").startswith(("http://", "https://")):
+                        source_url = candidate_source_url
+                        break
+                if source_url:
+                    redownloaded_path = await download_visual_asset(
+                        url=source_url,
+                        project_id=project_id,
+                        scene_order=scene.order,
+                        source="source",
+                    )
+                    if redownloaded_path:
+                        scene.visual_url = redownloaded_path
+                        recovered = True
+                        logger.info(
+                            "redownloaded visual asset: scene_id=%s order=%s visual_url=%s",
+                            scene.id,
+                            scene.order,
+                            scene.visual_url,
+                        )
+
+                if not recovered:
+                    refilled = await refill_scene_visual(
+                        scene=scene,
+                        project_id=project_id,
+                        is_islamic_profile=is_islamic_profile,
+                        used_asset_urls=set(s.visual_url for s in scenes if s.visual_url),
+                    )
+                    recovered = bool(refilled and scene.visual_url and os.path.exists(scene.visual_url))
+                    if recovered:
+                        logger.info(
+                            "refilled missing scene visual: scene_id=%s order=%s visual_url=%s",
+                            scene.id,
+                            scene.order,
+                            scene.visual_url,
+                        )
+
+                if recovered:
+                    recovered_scene_count += 1
+                else:
+                    unrecovered_scene_count += 1
+
+            logger.info(
+                "missing visual recovery summary: project_id=%s recovered_scene_count=%s unrecovered_scene_count=%s",
+                project_id,
+                recovered_scene_count,
+                unrecovered_scene_count,
+            )
+            await db.commit()
 
             # Build SRT if subtitles requested
             srt_path = None
