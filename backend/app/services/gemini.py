@@ -11,6 +11,7 @@ import google.generativeai as genai
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+SHORT_FORM_TYPES = {"short_form", "reels", "tiktok", "shorts"}
 
 _MODEL_NAME = "gemini-2.5-flash"
 _MAX_RETRIES = 3
@@ -191,6 +192,14 @@ Visual note for this niche: {visual_note}"""
     try:
         data = json.loads(_clean_json(text))
         if "scenes" in data and isinstance(data["scenes"], list):
+            if (video_type or "").lower() in SHORT_FORM_TYPES:
+                total_duration = sum(float(s.get("duration", 0) or 0) for s in data["scenes"])
+                if total_duration > 60:
+                    logger.warning(
+                        "short-form narration exceeds target project_video_type=%s target_duration_seconds=60 generated_duration_seconds=%.3f status=needs_script_shortening",
+                        video_type,
+                        total_duration,
+                    )
             logger.info(f"generate_script: success — {len(data['scenes'])} scenes, title={data.get('title', '')!r:.60}")
             return data
         logger.warning(f"generate_script: Gemini JSON missing 'scenes' key — using fallback. Keys: {list(data.keys())}")
