@@ -62,6 +62,15 @@ def _valid_audio_file(path: str) -> bool:
     return _probe_duration(path) > 0.5
 
 
+def _voice_gender(voice_name: str) -> str:
+    lower_voice = (voice_name or "").lower()
+    if any(name in lower_voice for name in ["shakir", "guy", "ahmet", "male"]):
+        return "male"
+    if any(name in lower_voice for name in ["salma", "jenny", "emel", "female"]):
+        return "female"
+    return "unknown"
+
+
 def _select_edge_tts_voice(language: str | None) -> str:
     lang = _normalize_lang(language)
     if lang == "ar":
@@ -89,6 +98,7 @@ async def generate_speech(text: str, voice_id: str, speed: float = 1.0, output_d
         try:
             import edge_tts
 
+            logger.info("project_language=%s selected_tts_voice=%s voice_gender=%s", language, selected_voice, _voice_gender(selected_voice))
             communicate = edge_tts.Communicate(text=text, voice=selected_voice, rate=f"{int((speed - 1.0) * 100):+d}%")
             await communicate.save(output_path)
             logger.info(
@@ -104,6 +114,16 @@ async def generate_speech(text: str, voice_id: str, speed: float = 1.0, output_d
                 return output_path
             raise RuntimeError("edge_tts output failed validation")
         except Exception as e:
+            if _normalize_lang(language) == "ar" and selected_voice == (settings.EDGE_TTS_VOICE_AR or EDGE_DEFAULTS["ar"][0]):
+                fallback_voice = EDGE_DEFAULTS["ar"][1]
+                try:
+                    logger.warning("edge_tts primary arabic voice failed; retrying fallback voice=%s", fallback_voice)
+                    communicate = edge_tts.Communicate(text=text, voice=fallback_voice, rate=f"{int((speed - 1.0) * 100):+d}%")
+                    await communicate.save(output_path)
+                    if _valid_audio_file(output_path):
+                        return output_path
+                except Exception:
+                    logger.error("edge_tts arabic fallback voice failed voice=%s", fallback_voice, exc_info=True)
             logger.error("edge_tts failed, falling back provider=fallback error=%s", str(e), exc_info=True)
 
     try:

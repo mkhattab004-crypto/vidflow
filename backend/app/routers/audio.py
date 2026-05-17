@@ -6,10 +6,13 @@ from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 from typing import Optional
 import os
+import logging
 from app.database import get_db
 from app.models.project import Project, Scene
 from app.services.kokoro_tts import VOICES, generate_speech, _select_edge_tts_voice
 from app.services.audio_assembler import assemble_project_audio, generate_scene_timings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/audio", tags=["audio"])
 
@@ -95,9 +98,16 @@ async def generate_audio(req: TTSRequest, background_tasks: BackgroundTasks, db:
 
     channel = project.channel
     bg_music = getattr(channel, "bg_music_url", None) if channel else None
+    language = (project.language or (project.channel.language if project.channel else "en") or "en")
+    normalized_language = (language or "").strip().lower()
+
+    selected_voice_id = req.voice_id
+    if normalized_language in {"ar", "arabic"} and req.voice_id == "ar-EG-SalmaNeural":
+        selected_voice_id = "edge_ar_default"
+        logger.info("project_language=ar overriding_legacy_female_default_voice requested_voice=%s selected_voice=%s", req.voice_id, selected_voice_id)
 
     # Update project immediately so the UI shows "processing"
-    project.voice_id = req.voice_id
+    project.voice_id = selected_voice_id
     project.audio_speed = req.speed
     project.status = "audio_generating"
     await db.commit()
@@ -106,10 +116,10 @@ async def generate_audio(req: TTSRequest, background_tasks: BackgroundTasks, db:
         _do_assemble,
         project_id=req.project_id,
         scenes_data=scenes_data,
-        voice_id=req.voice_id,
+        voice_id=selected_voice_id,
         speed=req.speed,
         bg_music=bg_music,
-        language=(project.language or (project.channel.language if project.channel else "en") or "en"),
+        language=language,
     )
 
     return {"status": "audio_generating", "project_id": req.project_id, "scenes": len(scenes_data)}
