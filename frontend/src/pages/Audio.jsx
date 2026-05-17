@@ -18,10 +18,10 @@ export default function Audio() {
 
   const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: () => getProjects() })
   const { data: project } = useQuery({ queryKey: ['project', activeProjectId], queryFn: () => getProject(activeProjectId), enabled: !!activeProjectId })
-  const { data: voices = [] } = useQuery({ queryKey: ['voices'], queryFn: () => getVoices() })
-  const { data: providerInfo } = useQuery({ queryKey: ['tts-provider', channelLanguage], queryFn: () => getTtsProvider(channelLanguage || 'en'), enabled: !!channelLanguage })
 
   const channelLanguage = project?.language || project?.channel?.language || 'en'
+  const { data: voices = [] } = useQuery({ queryKey: ['voices'], queryFn: () => getVoices() })
+  const { data: providerInfo } = useQuery({ queryKey: ['tts-provider', channelLanguage], queryFn: () => getTtsProvider(channelLanguage || 'en'), enabled: !!channelLanguage })
   const isIslamic = project?.is_islamic || project?.channel?.is_islamic || false
   const filteredVoices = voices.filter((v) => !v.language || v.language === channelLanguage || channelLanguage === 'en')
 
