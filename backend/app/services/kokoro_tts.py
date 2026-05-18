@@ -82,6 +82,22 @@ def _select_edge_tts_voice(language: str | None) -> str:
     return settings.EDGE_TTS_VOICE or settings.EDGE_TTS_VOICE_EN or EDGE_DEFAULTS["en"][0]
 
 
+def resolve_voice_for_project(language: str | None, selected_voice: str | None, user_selected: bool = False) -> tuple[str, str]:
+    lang = _normalize_lang(language)
+    lang_default_map = {"ar": "edge_ar_default", "en": "edge_en_default", "tr": "edge_tr_default"}
+    default_voice_id = lang_default_map.get(lang, "edge_en_default")
+    candidate = (selected_voice or "").strip()
+    if not candidate:
+        return default_voice_id, "language_default"
+    if candidate.startswith("edge_") and candidate.endswith("_default"):
+        return candidate, "requested_default"
+    if lang != "unknown" and not candidate.lower().startswith(f"{lang}-"):
+        return default_voice_id, "language_mismatch_override"
+    if lang == "ar" and not user_selected and _voice_gender(candidate) == "female":
+        return default_voice_id, "override_implicit_female_arabic"
+    return candidate, "user_selected"
+
+
 async def generate_speech(text: str, voice_id: str, speed: float = 1.0, output_dir: str = None, language: str = "en") -> str:
     out_dir = output_dir or settings.OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
@@ -114,16 +130,6 @@ async def generate_speech(text: str, voice_id: str, speed: float = 1.0, output_d
                 return output_path
             raise RuntimeError("edge_tts output failed validation")
         except Exception as e:
-            if _normalize_lang(language) == "ar" and selected_voice == (settings.EDGE_TTS_VOICE_AR or EDGE_DEFAULTS["ar"][0]):
-                fallback_voice = EDGE_DEFAULTS["ar"][1]
-                try:
-                    logger.warning("edge_tts primary arabic voice failed; retrying fallback voice=%s", fallback_voice)
-                    communicate = edge_tts.Communicate(text=text, voice=fallback_voice, rate=f"{int((speed - 1.0) * 100):+d}%")
-                    await communicate.save(output_path)
-                    if _valid_audio_file(output_path):
-                        return output_path
-                except Exception:
-                    logger.error("edge_tts arabic fallback voice failed voice=%s", fallback_voice, exc_info=True)
             logger.error("edge_tts failed, falling back provider=fallback error=%s", str(e), exc_info=True)
 
     try:
@@ -132,8 +138,12 @@ async def generate_speech(text: str, voice_id: str, speed: float = 1.0, output_d
         lang = _normalize_lang(language)
         tts = gTTS(text=text, lang=(lang if lang in {"ar", "en", "tr"} else "en"), slow=(speed < 0.8))
         tts.save(output_path)
+        logger.warning(
+            "fallback_provider_used provider=gtts selected_fallback_voice=language_only voice_gender=unknown male_voice_not_available_for_fallback_provider=true project_language=%s",
+            language,
+        )
         logger.info(
-            "tts generated provider=fallback project_language=%s selected_tts_voice=%s generated_audio_path=%s audio_size_bytes=%s audio_duration_seconds=%.3f",
+            "tts generated provider=fallback project_language=%s selected_tts_voice=%s voice_gender=unknown generated_audio_path=%s audio_size_bytes=%s audio_duration_seconds=%.3f",
             language,
             selected_voice,
             output_path,
