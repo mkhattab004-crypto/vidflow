@@ -93,4 +93,44 @@ async def migrate_scenes_schema():
                 )
             )
 
+        full_type_rows = await conn.execute(
+            text(
+                """
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_name = 'scenes'
+                  AND column_name IN (
+                    'visual_source_url',
+                    'visual_metadata',
+                    'visual_locked',
+                    'visual_selected_at',
+                    'thumbnail_url'
+                  )
+                """
+            )
+        )
+        full_column_types = {row.column_name: row.data_type for row in full_type_rows}
+
+        if full_column_types.get("visual_source_url") not in {"text", "character varying"}:
+            logger.info("coercing scenes.visual_source_url to TEXT")
+            await conn.execute(text("ALTER TABLE scenes ALTER COLUMN visual_source_url TYPE TEXT USING visual_source_url::text"))
+
+        if full_column_types.get("thumbnail_url") not in {"text", "character varying"}:
+            logger.info("coercing scenes.thumbnail_url to TEXT")
+            await conn.execute(text("ALTER TABLE scenes ALTER COLUMN thumbnail_url TYPE TEXT USING thumbnail_url::text"))
+
+        if full_column_types.get("visual_metadata") not in {"json", "jsonb"}:
+            logger.info("coercing scenes.visual_metadata to JSONB")
+            await conn.execute(text("ALTER TABLE scenes ALTER COLUMN visual_metadata TYPE JSONB USING COALESCE(visual_metadata::jsonb, '{}'::jsonb)"))
+        await conn.execute(text("ALTER TABLE scenes ALTER COLUMN visual_metadata SET DEFAULT '{}'::jsonb"))
+
+        if full_column_types.get("visual_locked") != "boolean":
+            logger.info("coercing scenes.visual_locked to BOOLEAN")
+            await conn.execute(text("ALTER TABLE scenes ALTER COLUMN visual_locked TYPE BOOLEAN USING visual_locked::boolean"))
+        await conn.execute(text("ALTER TABLE scenes ALTER COLUMN visual_locked SET DEFAULT FALSE"))
+
+        if full_column_types.get("visual_selected_at") != "timestamp with time zone":
+            logger.info("coercing scenes.visual_selected_at to TIMESTAMPTZ")
+            await conn.execute(text("ALTER TABLE scenes ALTER COLUMN visual_selected_at TYPE TIMESTAMPTZ USING visual_selected_at::timestamptz"))
+
     logger.info("scene schema migration complete")
