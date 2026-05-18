@@ -9,6 +9,7 @@ import os
 import re
 import httpx
 import logging
+import uuid
 from datetime import datetime, timezone
 router = APIRouter(prefix="/visuals", tags=["visuals"])
 
@@ -107,6 +108,18 @@ def _safe_name(value: str) -> str:
     value = value or "asset"
     value = re.sub(r"[^a-zA-Z0-9_-]+", "_", value)
     return value[:80]
+
+
+def normalize_uuid(value: object, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, TypeError, AttributeError) as exc:
+        logger.error("invalid_uuid field=%s value=%r value_type=%s", field_name, value, type(value).__name__)
+        raise ValueError(f"Invalid UUID for {field_name}: {value!r}") from exc
 
 
 async def download_visual_asset(url: str, project_id: str, scene_order: int, source: str) -> str | None:
@@ -305,19 +318,44 @@ async def refill_scene_visual(
         scene.visual_status = "needs_ai"
         return False
 
+    selected_project_uuid = None
+    selected_scene_uuid = None
+    try:
+        selected_project_uuid = normalize_uuid(project.id, "project.id")
+    except ValueError:
+        selected_project_uuid = None
+    try:
+        selected_scene_uuid = normalize_uuid(scene.id, "scene.id")
+    except ValueError:
+        selected_scene_uuid = None
+
     scene.visual_url = downloaded_path
     scene.visual_source_url = selected_remote_url
     scene.visual_source = selected_source if selected_source else "stock"
     scene.visual_status = "suggested"
     scene.visual_locked = False
-    scene.visual_selected_for_project_id = project_id
-    scene.visual_selected_for_scene_id = scene.id
-    scene.visual_selected_at = datetime.now(timezone.utc)
+    scene.visual_selected_for_project_id = selected_project_uuid
+    scene.visual_selected_for_scene_id = selected_scene_uuid
+    scene.visual_selected_at = datetime.utcnow()
     scene.visual_metadata = {"generated_visual_query": generated_query}
+    scene.thumbnail_url = None
     if selected_attribution:
         scene.on_screen_source = selected_attribution
     if scene.visual_source_url:
         used_asset_urls.add(scene.visual_source_url)
+    logger.info(
+        "visual_assignment_debug project_id=%s scene_id=%s project_id_type=%s scene_id_type=%s visual_selected_for_project_id=%s visual_selected_for_project_id_type=%s visual_selected_for_scene_id=%s visual_selected_for_scene_id_type=%s visual_metadata_type=%s visual_source_url=%s",
+        project.id,
+        scene.id,
+        type(project.id).__name__,
+        type(scene.id).__name__,
+        scene.visual_selected_for_project_id,
+        type(scene.visual_selected_for_project_id).__name__,
+        scene.visual_selected_for_scene_id,
+        type(scene.visual_selected_for_scene_id).__name__,
+        type(scene.visual_metadata).__name__,
+        scene.visual_source_url,
+    )
     logger.info("project_id=%s scene_id=%s scene_order=%s generated_visual_query=%s selected_visual_url=%s", project_id, scene.id, scene.order, generated_query, scene.visual_source_url or scene.visual_url)
     if is_islamic_profile:
         logger.info("selected_safe_visual_url=%s", scene.visual_url)
@@ -363,9 +401,30 @@ async def assign_visual(
     scene.visual_source = visual_source
     scene.visual_status = "approved"
     scene.visual_locked = True
-    scene.visual_selected_for_project_id = scene.project_id
-    scene.visual_selected_for_scene_id = scene.id
-    scene.visual_selected_at = datetime.now(timezone.utc)
+    try:
+        selected_project_uuid = normalize_uuid(scene.project_id, "scene.project_id")
+    except ValueError:
+        selected_project_uuid = None
+    try:
+        selected_scene_uuid = normalize_uuid(scene.id, "scene.id")
+    except ValueError:
+        selected_scene_uuid = None
+    scene.visual_selected_for_project_id = selected_project_uuid
+    scene.visual_selected_for_scene_id = selected_scene_uuid
+    scene.visual_selected_at = datetime.utcnow()
+    logger.info(
+        "visual_assignment_debug project_id=%s scene_id=%s project_id_type=%s scene_id_type=%s visual_selected_for_project_id=%s visual_selected_for_project_id_type=%s visual_selected_for_scene_id=%s visual_selected_for_scene_id_type=%s visual_metadata_type=%s visual_source_url=%s",
+        scene.project_id,
+        scene.id,
+        type(scene.project_id).__name__,
+        type(scene.id).__name__,
+        scene.visual_selected_for_project_id,
+        type(scene.visual_selected_for_project_id).__name__,
+        scene.visual_selected_for_scene_id,
+        type(scene.visual_selected_for_scene_id).__name__,
+        type(scene.visual_metadata).__name__,
+        scene.visual_source_url,
+    )
     if on_screen_source:
         scene.on_screen_source = on_screen_source
     await db.commit()
