@@ -451,6 +451,10 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", force_refre
             scene.visual_selected_for_project_id = None
             scene.visual_selected_for_scene_id = None
             scene.visual_selected_at = None
+    if force_refresh:
+        project.output_url = None
+        project.output_9_16_url = None
+        project.output_1_1_url = None
     scenes = [scene for scene in all_scenes if (not scene.visual_locked and _needs_visual_refill(scene))]
     is_islamic_profile = _detect_islamic_visual_profile(project, all_scenes)
 

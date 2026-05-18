@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
+def _clear_project_render_outputs(project: Project) -> None:
+    project.output_url = None
+    project.output_9_16_url = None
+    project.output_1_1_url = None
+
 
 def _build_scene_for_script_generation(project_id: str, scene_data: dict) -> Scene:
     scene = Scene(
@@ -186,11 +191,20 @@ async def generate_content(project_id: str, db: AsyncSession = Depends(get_db)):
     project.trust_level = content.get("trust_level")
     project.status = "content_generated"
 
+    old_scene_texts = [(sc.script_text or "").strip() for sc in project.scenes]
     for sc in project.scenes:
         await db.delete(sc)
 
     for scene_data in content.get("scenes", []):
         db.add(_build_scene_for_script_generation(project.id, scene_data))
+
+    new_scene_texts = [(s.get("script_text") or "").strip() for s in content.get("scenes", [])]
+    scene_text_changed = old_scene_texts != new_scene_texts
+    _clear_project_render_outputs(project)
+    logger.info("current_project_id=%s output_cleared_due_to_audio_or_script_change=true scene_text_changed=%s", project_id, scene_text_changed)
+    if scene_text_changed:
+        project.audio_url = None
+        project.status = "content_generated"
 
     await db.commit()
     return await _load_project(project_id, db)

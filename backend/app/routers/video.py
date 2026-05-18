@@ -1,6 +1,7 @@
 import os
 import logging
 import re
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,7 +70,7 @@ class MultiFormatRequest(BaseModel):
     formats: list[str] | None = None
 
 
-async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
+async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool, render_job_id: str):
     """Background task: full render pipeline."""
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
@@ -84,6 +85,7 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 return
 
             ensure_project_dirs(project_id)
+            logger.info("current_project_id=%s render_job_id=%s using_existing_output_as_input=false", project_id, render_job_id)
             output_dir = get_project_renders_dir(project_id)
             os.makedirs(output_dir, exist_ok=True)
             fmt_name = aspect_ratio.replace(":", "x")
@@ -183,10 +185,15 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
 
             visual_manifest = []
             for scene in scenes:
+                path_valid = _validate_project_asset_path(project_id, scene.visual_url) if scene.visual_url else False
+                if path_valid and scene.visual_selected_for_scene_id is None:
+                    scene.visual_selected_for_project_id = project_id
+                    scene.visual_selected_for_scene_id = scene.id
+                    logger.info("repaired_visual_metadata=true current_project_id=%s scene_id=%s render_job_id=%s", project_id, scene.id, render_job_id)
                 visual_valid_for_project = bool(
-                    scene.visual_selected_for_project_id == project_id
+                    path_valid
+                    and scene.visual_selected_for_project_id == project_id
                     and scene.visual_selected_for_scene_id == scene.id
-                    and _validate_project_asset_path(project_id, scene.visual_url)
                 )
                 visual_manifest.append({
                     "current_project_id": project_id,
@@ -202,10 +209,12 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 logger.info("visual_manifest project_id=%s project_title=%s scene_id=%s scene_order=%s visual_url=%s visual_source_url=%s visual_selected_for_project_id=%s visual_selected_for_scene_id=%s visual_valid_for_project=%s", project_id, project.title, scene.id, scene.order, scene.visual_url, scene.visual_source_url, scene.visual_selected_for_project_id, scene.visual_selected_for_scene_id, visual_valid_for_project)
 
             invalid_manifest = [m for m in visual_manifest if not m["visual_valid_for_project"]]
+            visual_project_id_valid = not invalid_manifest
             if invalid_manifest:
                 raise RuntimeError(f"Render blocked: {len(invalid_manifest)} scene visuals invalid for current project")
 
             audio_valid = _validate_project_asset_path(project_id, project.audio_url) if project.audio_url else False
+            logger.info("current_project_id=%s render_job_id=%s audio_project_id_valid=%s visual_project_id_valid=%s", project_id, render_job_id, audio_valid, visual_project_id_valid)
             if project.audio_url and not audio_valid:
                 logger.info("narration_audio_valid_for_project=false regenerated_current_project_audio=true")
                 project.audio_url = None
@@ -300,6 +309,8 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
             )
 
             if ok:
+                video_tmp_created_for_current_render = os.path.exists(output_path)
+                logger.info("current_project_id=%s render_job_id=%s video_tmp_created_for_current_render=%s", project_id, render_job_id, video_tmp_created_for_current_render)
                 if aspect_ratio == "16:9":
                     project.output_url = output_path
                     logger.info("output_url saved for format=%s field=output_url path=%s", aspect_ratio, output_path)
@@ -370,9 +381,10 @@ async def render_video(req: RenderRequest, background_tasks: BackgroundTasks, db
         raise HTTPException(status_code=400, detail="Reviews 1 and 2 must be approved before rendering")
 
     project.status = "rendering"
+    render_job_id = str(uuid.uuid4())
     await db.commit()
-    background_tasks.add_task(_do_render, req.project_id, req.aspect_ratio, req.burn_subtitles)
-    return {"status": "rendering_started", "project_id": req.project_id, "aspect_ratio": req.aspect_ratio}
+    background_tasks.add_task(_do_render, req.project_id, req.aspect_ratio, req.burn_subtitles, render_job_id)
+    return {"status": "rendering_started", "project_id": req.project_id, "aspect_ratio": req.aspect_ratio, "render_job_id": render_job_id}
 
 
 @router.post("/render-all-formats")
@@ -396,12 +408,13 @@ async def render_all_formats(req: MultiFormatRequest, background_tasks: Backgrou
         raise HTTPException(status_code=400, detail=f"No valid formats requested. Allowed formats: {allowed_formats}")
 
     project.status = "rendering"
+    render_job_id = str(uuid.uuid4())
     await db.commit()
 
     format_statuses = []
     for fmt in valid_formats:
         logger.info("queue render format=%s project_id=%s", fmt, req.project_id)
-        background_tasks.add_task(_do_render, req.project_id, fmt, False)
+        background_tasks.add_task(_do_render, req.project_id, fmt, False, f"{render_job_id}:{fmt}")
         format_statuses.append({"format": fmt, "status": "queued"})
 
     return {
