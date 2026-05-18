@@ -28,7 +28,7 @@ export default function Export() {
   const isShortFormProject = shortFormTypes.has((project?.video_type || '').toLowerCase())
 const renderMutation = useMutation({
   mutationFn: () => renderAllFormats({
-    project_id: project?.id,
+    project_id: activeProjectId,
     formats: isShortFormProject ? ['9:16', '16:9', '1:1'] : ['16:9', '9:16', '1:1'],
   }),
   onSuccess: () => {
@@ -75,7 +75,11 @@ const renderMutation = useMutation({
     )
   }
 
-  const hasVideo = project?.output_url || project?.output_9_16_url || project?.output_1_1_url
+  const belongsToActiveProject = (path) => typeof path === 'string' && path.includes(`/projects/${activeProjectId}/`)
+  const hasVideo =
+    belongsToActiveProject(project?.output_url) ||
+    belongsToActiveProject(project?.output_9_16_url) ||
+    belongsToActiveProject(project?.output_1_1_url)
   const allApproved = project?.review1_approved && project?.review2_approved && project?.review3_approved
   return (
     <div className="max-w-2xl">
@@ -116,14 +120,14 @@ const renderMutation = useMutation({
         <div className="grid grid-cols-3 gap-3">
           {(isShortFormProject
             ? [
-                { icon: Smartphone, label: 'TikTok / Reels', sub: '9:16 · 1080×1920', key: 'video_9x16', has: !!project?.output_9_16_url },
-                { icon: Monitor, label: 'YouTube', sub: '16:9 · 1920×1080', key: 'video_16x9', has: !!project?.output_url },
-                { icon: Square, label: 'Instagram', sub: '1:1 · 1080×1080', key: 'video_1x1', has: !!project?.output_1_1_url },
+                { icon: Smartphone, label: 'TikTok / Reels', sub: '9:16 · 1080×1920', key: 'video_9x16', has: belongsToActiveProject(project?.output_9_16_url) },
+                { icon: Monitor, label: 'YouTube', sub: '16:9 · 1920×1080', key: 'video_16x9', has: belongsToActiveProject(project?.output_url) },
+                { icon: Square, label: 'Instagram', sub: '1:1 · 1080×1080', key: 'video_1x1', has: belongsToActiveProject(project?.output_1_1_url) },
               ]
             : [
-                { icon: Monitor, label: 'YouTube', sub: '16:9 · 1920×1080', key: 'video_16x9', has: !!project?.output_url },
-                { icon: Smartphone, label: 'TikTok / Reels', sub: '9:16 · 1080×1920', key: 'video_9x16', has: !!project?.output_9_16_url },
-                { icon: Square, label: 'Instagram', sub: '1:1 · 1080×1080', key: 'video_1x1', has: !!project?.output_1_1_url },
+                { icon: Monitor, label: 'YouTube', sub: '16:9 · 1920×1080', key: 'video_16x9', has: belongsToActiveProject(project?.output_url) },
+                { icon: Smartphone, label: 'TikTok / Reels', sub: '9:16 · 1080×1920', key: 'video_9x16', has: belongsToActiveProject(project?.output_9_16_url) },
+                { icon: Square, label: 'Instagram', sub: '1:1 · 1080×1080', key: 'video_1x1', has: belongsToActiveProject(project?.output_1_1_url) },
               ]).map(({ icon: Icon, label, sub, key, has }) => (
             <button
               key={key}

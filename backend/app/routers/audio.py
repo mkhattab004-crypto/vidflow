@@ -143,7 +143,11 @@ async def _do_assemble(project_id: str, scenes_data: list, voice_id: str, speed:
                 expected_audio = os.path.join(get_project_audio_dir(project_id), "narration.mp3")
                 if audio_path and audio_path != expected_audio:
                     logger.info("narration_audio_valid_for_project=false current_project_id=%s audio_output_path=%s expected_audio_output_path=%s", project_id, audio_path, expected_audio)
-                project.audio_url = audio_path
+                project.audio_url = expected_audio if os.path.exists(expected_audio) else audio_path
+                project.output_url = None
+                project.output_9_16_url = None
+                project.output_1_1_url = None
+                logger.info("current_project_id=%s output_cleared_due_to_audio_or_script_change=true", project_id)
                 project.status = "audio_ready"
                 await db.commit()
         except Exception as e:
