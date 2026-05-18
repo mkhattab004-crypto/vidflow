@@ -9,6 +9,7 @@ import os
 import re
 import httpx
 import logging
+from datetime import datetime, timezone
 router = APIRouter(prefix="/visuals", tags=["visuals"])
 
 logger = logging.getLogger(__name__)
@@ -160,7 +161,28 @@ FALLBACK_ORDER = {
 }
 
 
+def _build_scene_visual_query(project: Project, scene: Scene) -> str:
+    parts = [
+        project.title or "",
+        project.niche or "",
+        project.language or "",
+        scene.script_text or "",
+        f"scene {scene.order}",
+        scene.visual_query or "",
+    ]
+    query = " ".join(part.strip() for part in parts if part and part.strip())
+    return re.sub(r"\s+", " ", query).strip()
+
+
+def _scene_visual_owned_by_project(scene: Scene, project_id: str) -> bool:
+    return bool(
+        scene.visual_selected_for_project_id == project_id
+        and scene.visual_selected_for_scene_id == scene.id
+    )
+
+
 async def refill_scene_visual(
+    project: Project,
     scene: Scene,
     project_id: str,
     is_islamic_profile: bool,
@@ -168,15 +190,18 @@ async def refill_scene_visual(
 ) -> bool:
     """Refill a scene visual using existing auto-fill search/safety logic."""
     used_asset_urls = used_asset_urls or set()
-    if not scene.visual_query:
+    generated_query = _build_scene_visual_query(project, scene)
+    scene.visual_query = generated_query
+    if not generated_query:
         scene.visual_status = "missing_query"
         return False
 
     downloaded_path = None
     selected_source = None
     selected_attribution = None
+    selected_remote_url = None
 
-    query_to_use = scene.visual_query
+    query_to_use = generated_query
     if is_islamic_profile:
         query_to_use = _rewrite_safe_query(scene.visual_query)
         logger.info("original_visual_query=%s", scene.visual_query)
@@ -194,13 +219,14 @@ async def refill_scene_visual(
                 logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
                 continue
         if candidate_url in used_asset_urls:
-            logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
+            logger.info("duplicate_visual_skipped=true project_id=%s scene_id=%s scene_order=%s duplicate_source_url=%s source=%s", project_id, scene.id, scene.order, candidate_url, candidate_source)
             continue
         local_path = await download_visual_asset(url=candidate_url, project_id=project_id, scene_order=scene.order, source=candidate_source)
         if local_path:
             downloaded_path = local_path
             selected_source = candidate_source
             selected_attribution = candidate.get("attribution")
+            selected_remote_url = candidate_url
             logger.info("pexels video selected")
             break
 
@@ -216,13 +242,14 @@ async def refill_scene_visual(
                     logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
                     continue
             if candidate_url in used_asset_urls:
-                logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
+                logger.info("duplicate_visual_skipped=true project_id=%s scene_id=%s scene_order=%s duplicate_source_url=%s source=%s", project_id, scene.id, scene.order, candidate_url, candidate_source)
                 continue
             local_path = await download_visual_asset(url=candidate_url, project_id=project_id, scene_order=scene.order, source=candidate_source)
             if local_path:
                 downloaded_path = local_path
                 selected_source = candidate_source
                 selected_attribution = candidate.get("attribution")
+                selected_remote_url = candidate_url
                 logger.info("pixabay video selected")
                 break
 
@@ -240,13 +267,14 @@ async def refill_scene_visual(
                     logger.info("blocked_visual_result reason=%s source=%s url=%s", blocked_reason, candidate_source, candidate_url)
                     continue
             if candidate_url in used_asset_urls:
-                logger.info("duplicate visual asset skipped: project_id=%s scene_order=%s source=%s url=%s", project_id, scene.order, candidate_source, candidate_url)
+                logger.info("duplicate_visual_skipped=true project_id=%s scene_id=%s scene_order=%s duplicate_source_url=%s source=%s", project_id, scene.id, scene.order, candidate_url, candidate_source)
                 continue
             local_path = await download_visual_asset(url=candidate_url, project_id=project_id, scene_order=scene.order, source=candidate_source)
             if local_path:
                 downloaded_path = local_path
                 selected_source = candidate_source
                 selected_attribution = candidate.get("attribution")
+                selected_remote_url = candidate_url
                 logger.info("photo fallback selected")
                 break
 
@@ -268,6 +296,7 @@ async def refill_scene_visual(
                     downloaded_path = local_path
                     selected_source = candidate.get("source", "unknown")
                     selected_attribution = candidate.get("attribution")
+                    selected_remote_url = candidate_url
                     break
             if downloaded_path:
                 break
@@ -277,11 +306,19 @@ async def refill_scene_visual(
         return False
 
     scene.visual_url = downloaded_path
+    scene.visual_source_url = selected_remote_url
     scene.visual_source = selected_source if selected_source else "stock"
     scene.visual_status = "suggested"
+    scene.visual_locked = False
+    scene.visual_selected_for_project_id = project_id
+    scene.visual_selected_for_scene_id = scene.id
+    scene.visual_selected_at = datetime.now(timezone.utc)
+    scene.visual_metadata = {"generated_visual_query": generated_query}
     if selected_attribution:
         scene.on_screen_source = selected_attribution
-    used_asset_urls.add(scene.visual_url)
+    if scene.visual_source_url:
+        used_asset_urls.add(scene.visual_source_url)
+    logger.info("project_id=%s scene_id=%s scene_order=%s generated_visual_query=%s selected_visual_url=%s", project_id, scene.id, scene.order, generated_query, scene.visual_source_url or scene.visual_url)
     if is_islamic_profile:
         logger.info("selected_safe_visual_url=%s", scene.visual_url)
     return True
@@ -322,8 +359,13 @@ async def assign_visual(
     if not scene:
         raise HTTPException(status_code=404, detail="Scene not found")
     scene.visual_url = visual_url
+    scene.visual_source_url = visual_url if visual_url.startswith(("http://", "https://")) else scene.visual_source_url
     scene.visual_source = visual_source
     scene.visual_status = "approved"
+    scene.visual_locked = True
+    scene.visual_selected_for_project_id = scene.project_id
+    scene.visual_selected_for_scene_id = scene.id
+    scene.visual_selected_at = datetime.now(timezone.utc)
     if on_screen_source:
         scene.on_screen_source = on_screen_source
     await db.commit()
@@ -331,14 +373,26 @@ async def assign_visual(
 
 
 @router.post("/auto-fill/{project_id}")
-async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSession = Depends(get_db)):
+async def auto_fill_visuals(project_id: str, niche: str = "default", force_refresh: bool = True, db: AsyncSession = Depends(get_db)):
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     result = await db.execute(select(Scene).where(Scene.project_id == project_id))
     all_scenes = result.scalars().all()
-    scenes = [scene for scene in all_scenes if _needs_visual_refill(scene)]
+    for scene in all_scenes:
+        if force_refresh and not scene.visual_locked:
+            scene.visual_url = None
+            scene.visual_source_url = None
+            scene.visual_source = None
+            scene.visual_status = "pending"
+            scene.visual_metadata = {}
+            scene.thumbnail_url = None
+            scene.on_screen_source = None
+            scene.visual_selected_for_project_id = None
+            scene.visual_selected_for_scene_id = None
+            scene.visual_selected_at = None
+    scenes = [scene for scene in all_scenes if (not scene.visual_locked and _needs_visual_refill(scene))]
     is_islamic_profile = _detect_islamic_visual_profile(project, all_scenes)
 
     if is_islamic_profile:
@@ -346,10 +400,11 @@ async def auto_fill_visuals(project_id: str, niche: str = "default", db: AsyncSe
 
     filled = 0
     failed = 0
-    used_asset_urls: set[str] = set()
+    used_asset_urls: set[str] = set(filter(None, [s.visual_source_url for s in all_scenes if s.visual_locked]))
 
     for scene in scenes:
         ok = await refill_scene_visual(
+            project=project,
             scene=scene,
             project_id=project_id,
             is_islamic_profile=is_islamic_profile,

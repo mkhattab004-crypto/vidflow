@@ -35,7 +35,7 @@ export default function Visuals() {
   })
 
   const autoFillMutation = useMutation({
-    mutationFn: () => autoFillVisuals(project?.id),
+    mutationFn: () => autoFillVisuals(activeProjectId, project?.niche, true),
     onSuccess: (data) => { qc.invalidateQueries({ queryKey: ['gaps', activeProjectId] }); toast.success(`Auto-filled ${data.filled} scenes`) },
     onError: (e) => toast.error(e.message),
   })
@@ -76,7 +76,7 @@ export default function Visuals() {
         <div className="flex gap-2">
           <button className="btn-secondary" onClick={() => setActiveProjectId(null)}>Change Project</button>
           <button className="btn-primary" onClick={() => autoFillMutation.mutate()} disabled={autoFillMutation.isPending}>
-            <Zap size={16} /> {autoFillMutation.isPending ? 'Filling...' : 'Auto-Fill All'}
+            <Zap size={16} /> {autoFillMutation.isPending ? 'Filling...' : 'Regenerate All Visuals'}
           </button>
         </div>
       </div>

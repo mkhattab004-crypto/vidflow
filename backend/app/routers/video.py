@@ -121,12 +121,13 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 )
 
                 recovered = False
+                ownership_valid = bool(scene.visual_selected_for_project_id == project_id and scene.visual_selected_for_scene_id == scene.id)
                 source_url = None
-                for candidate_source_url in (scene.visual_source, scene.on_screen_source):
+                for candidate_source_url in (scene.visual_source_url, scene.on_screen_source):
                     if (candidate_source_url or "").startswith(("http://", "https://")):
                         source_url = candidate_source_url
                         break
-                if source_url:
+                if source_url and ownership_valid:
                     redownloaded_path = await download_visual_asset(
                         url=source_url,
                         project_id=project_id,
@@ -143,8 +144,16 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                             scene.visual_url,
                         )
 
+                if source_url and not ownership_valid:
+                    logger.error("asset_project_mismatch current_project_id=%s scene_id=%s scene_order=%s visual_selected_for_project_id=%s visual_selected_for_scene_id=%s", project_id, scene.id, scene.order, scene.visual_selected_for_project_id, scene.visual_selected_for_scene_id)
+                    scene.visual_url = None
+                    scene.visual_source_url = None
+                    scene.visual_source = None
+                    scene.visual_status = "pending"
+                    scene.visual_metadata = {}
                 if not recovered:
                     refilled = await refill_scene_visual(
+                        project=project,
                         scene=scene,
                         project_id=project_id,
                         is_islamic_profile=is_islamic_profile,
@@ -171,6 +180,30 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 unrecovered_scene_count,
             )
             await db.commit()
+
+            visual_manifest = []
+            for scene in scenes:
+                visual_valid_for_project = bool(
+                    scene.visual_selected_for_project_id == project_id
+                    and scene.visual_selected_for_scene_id == scene.id
+                    and _validate_project_asset_path(project_id, scene.visual_url)
+                )
+                visual_manifest.append({
+                    "current_project_id": project_id,
+                    "project_title": project.title,
+                    "scene_id": scene.id,
+                    "scene_order": scene.order,
+                    "visual_url": scene.visual_url,
+                    "visual_source_url": scene.visual_source_url,
+                    "visual_selected_for_project_id": scene.visual_selected_for_project_id,
+                    "visual_selected_for_scene_id": scene.visual_selected_for_scene_id,
+                    "visual_valid_for_project": visual_valid_for_project,
+                })
+                logger.info("visual_manifest project_id=%s project_title=%s scene_id=%s scene_order=%s visual_url=%s visual_source_url=%s visual_selected_for_project_id=%s visual_selected_for_scene_id=%s visual_valid_for_project=%s", project_id, project.title, scene.id, scene.order, scene.visual_url, scene.visual_source_url, scene.visual_selected_for_project_id, scene.visual_selected_for_scene_id, visual_valid_for_project)
+
+            invalid_manifest = [m for m in visual_manifest if not m["visual_valid_for_project"]]
+            if invalid_manifest:
+                raise RuntimeError(f"Render blocked: {len(invalid_manifest)} scene visuals invalid for current project")
 
             audio_valid = _validate_project_asset_path(project_id, project.audio_url) if project.audio_url else False
             if project.audio_url and not audio_valid:
