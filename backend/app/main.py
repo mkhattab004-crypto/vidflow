@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.database import create_tables, engine, AsyncSessionLocal
+from app.database import create_tables, migrate_scenes_schema, engine, AsyncSessionLocal
 from app.logging_config import setup_logging
 from app.routers import channels, ideas, projects, visuals, audio, video, export, islamic
 from app.routers import automation, thumbnail
@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI):
 
     try:
         await create_tables()
+        await migrate_scenes_schema()
         # Add new columns to existing tables (idempotent — IF NOT EXISTS)
         from sqlalchemy import text
         async with engine.begin() as conn:
