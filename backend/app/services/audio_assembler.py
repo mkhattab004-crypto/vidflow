@@ -4,7 +4,7 @@ import hashlib
 import logging
 import subprocess
 from typing import Optional
-from app.config import settings
+from app.services.storage import ensure_project_dirs, get_project_audio_dir
 from app.services.kokoro_tts import generate_speech
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,8 @@ def _valid_audio_file(path: str) -> bool:
 
 
 async def assemble_project_audio(scenes: list[dict], voice_id: str, speed: float, project_id: str, language: str = "en", bg_music_path: Optional[str] = None) -> str:
-    out_dir = os.path.join(settings.OUTPUT_DIR, project_id)
+    ensure_project_dirs(project_id)
+    out_dir = get_project_audio_dir(project_id)
     os.makedirs(out_dir, exist_ok=True)
     final_path = os.path.join(out_dir, "narration.mp3")
 
@@ -61,6 +62,7 @@ async def assemble_project_audio(scenes: list[dict], voice_id: str, speed: float
         duration,
         language,
     )
+    logger.info("saved_audio_path=%s", final_path)
     return final_path if _valid_audio_file(final_path) else ""
 
 

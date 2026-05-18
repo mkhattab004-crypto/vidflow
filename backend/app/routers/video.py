@@ -18,9 +18,10 @@ from app.services.video_processor import (
     render_diagnostic_video,
     probe_media_duration,
 )
-from app.services.audio_assembler import generate_scene_timings
+from app.services.audio_assembler import generate_scene_timings, assemble_project_audio
 from app.services.n8n_service import notify_video_ready
 from app.config import settings
+from app.services.storage import ensure_project_dirs, get_project_renders_dir
 from app.routers.visuals import (
     _detect_islamic_visual_profile,
     refill_scene_visual,
@@ -63,10 +64,12 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
             if not project:
                 return
 
-            output_dir = os.path.join(settings.OUTPUT_DIR, project_id)
+            ensure_project_dirs(project_id)
+            output_dir = get_project_renders_dir(project_id)
             os.makedirs(output_dir, exist_ok=True)
             fmt_name = aspect_ratio.replace(":", "x")
-            output_path = os.path.join(output_dir, f"output_{fmt_name}.mp4")
+            output_name = {"16x9": "youtube_16x9.mp4", "9x16": "tiktok_9x16.mp4", "1x1": "instagram_1x1.mp4"}.get(fmt_name, f"output_{fmt_name}.mp4")
+            output_path = os.path.join(output_dir, output_name)
 
             scenes = sorted(project.scenes, key=lambda s: s.order)
             channel = project.channel
@@ -145,6 +148,23 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 unrecovered_scene_count,
             )
             await db.commit()
+
+            if project.audio_url and not project.audio_url.startswith(("http://", "https://")) and not os.path.exists(project.audio_url):
+                logger.warning("narration audio missing: project_id=%s audio_url=%s", project_id, project.audio_url)
+                scenes_audio_data = [{"id": s.id, "script_text": s.script_text or "", "duration": s.duration} for s in scenes]
+                regenerated_audio = await assemble_project_audio(
+                    scenes=scenes_audio_data,
+                    voice_id=project.voice_id or "edge_en_default",
+                    speed=project.audio_speed or 1.0,
+                    project_id=project_id,
+                    language=project.language or "en",
+                )
+                if regenerated_audio:
+                    project.audio_url = regenerated_audio
+                    await db.commit()
+                    logger.info("recovered_audio=true saved_audio_path=%s", regenerated_audio)
+                else:
+                    logger.warning("recovered_audio=false project_id=%s", project_id)
 
             # Build SRT if subtitles requested
             srt_path = None
@@ -239,6 +259,8 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                     final_output_duration_seconds,
                 )
                 logger.info("render format succeeded project_id=%s format=%s title=%s", project_id, aspect_ratio, project.title)
+                logger.info("saved_render_path=%s", output_path)
+                logger.info("render_output_saved=true project_id=%s format=%s", project_id, aspect_ratio)
                 await db.commit()
 
                 # Notify n8n

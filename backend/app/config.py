@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
     UPLOAD_DIR: str = "/tmp/vidflow_uploads"
     OUTPUT_DIR: str = "/tmp/vidflow_outputs"
+    VIDFLOW_STORAGE_DIR: str = "/tmp/vidflow_storage"
 
     # TTS
     TTS_PROVIDER: str = "edge_tts"
