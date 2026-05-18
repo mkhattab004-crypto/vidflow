@@ -39,6 +39,7 @@ docker-compose up -d
 | `PEXELS_API_KEY` | Yes | Pexels API key (free) |
 | `PIXABAY_API_KEY` | Yes | Pixabay API key (free) |
 | `SECRET_KEY` | Yes | App secret key |
+| `VIDFLOW_STORAGE_DIR` | No | Persistent storage root for project assets/audio/renders (defaults to `/tmp/vidflow_storage`) |
 
 ## Deploy on Railway
 
@@ -48,6 +49,7 @@ docker-compose up -d
 3. Deploy backend from `backend/` directory
 4. Deploy frontend from `frontend/` directory
 5. Set environment variables
+6. (Recommended) Add a Railway Volume and set `VIDFLOW_STORAGE_DIR` to the mounted volume path so generated assets survive deploy/restarts.
 
 ### Option 2: Railway CLI
 ```bash

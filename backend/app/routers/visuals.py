@@ -4,6 +4,7 @@ from sqlalchemy import select
 from app.database import get_db
 from app.models.project import Project, Scene
 from app.services import pexels, pixabay, wikimedia
+from app.services.storage import get_project_assets_dir, ensure_project_dirs
 import os
 import re
 import httpx
@@ -11,8 +12,6 @@ import logging
 router = APIRouter(prefix="/visuals", tags=["visuals"])
 
 logger = logging.getLogger(__name__)
-
-ASSET_ROOT = "/tmp/vidflow_outputs"
 
 ISLAMIC_DETECTION_KEYWORDS = {
     "islam", "islamic", "quran", "qur'an", "koran", "ayat", "surah", "hadith", "prophet", "allah", "prayer", "salah", "mosque", "ramadan", "dua", "dhikr",
@@ -83,8 +82,7 @@ def _resolve_local_visual_path(visual_url: str | None) -> str | None:
         return None
 
     if visual_url.startswith("/static/"):
-        static_relative = visual_url[len("/static/"):].lstrip("/")
-        return os.path.join(ASSET_ROOT, static_relative)
+        return visual_url[len("/static/"):].lstrip("/")
 
     return visual_url
 
@@ -121,7 +119,8 @@ async def download_visual_asset(url: str, project_id: str, scene_order: int, sou
     if not url.startswith("http"):
         return url if os.path.exists(url) else None
 
-    project_dir = os.path.join(ASSET_ROOT, _safe_name(project_id), "assets")
+    ensure_project_dirs(project_id)
+    project_dir = get_project_assets_dir(project_id)
     os.makedirs(project_dir, exist_ok=True)
 
     clean_url = url.split("?")[0]
@@ -144,6 +143,7 @@ async def download_visual_asset(url: str, project_id: str, scene_order: int, sou
                             f.write(chunk)
 
         if os.path.exists(local_path) and os.path.getsize(local_path) > 1000:
+            logger.info("saved_visual_asset_path=%s", local_path)
             return local_path
 
         logger.error(f"Downloaded visual file is empty or too small: {local_path}")
