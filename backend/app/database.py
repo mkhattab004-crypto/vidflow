@@ -57,4 +57,40 @@ async def migrate_scenes_schema():
             if not was_present:
                 logger.info("added missing scene column %s", column_name)
 
+        type_rows = await conn.execute(
+            text(
+                """
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_name = 'scenes'
+                  AND column_name IN ('visual_selected_for_project_id', 'visual_selected_for_scene_id')
+                """
+            )
+        )
+        column_types = {row.column_name: row.data_type for row in type_rows}
+
+        if column_types.get("visual_selected_for_project_id") != "uuid":
+            logger.info("coercing scenes.visual_selected_for_project_id to UUID")
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE scenes
+                    ALTER COLUMN visual_selected_for_project_id TYPE UUID
+                    USING NULLIF(visual_selected_for_project_id::text, '')::uuid
+                    """
+                )
+            )
+
+        if column_types.get("visual_selected_for_scene_id") != "uuid":
+            logger.info("coercing scenes.visual_selected_for_scene_id to UUID")
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE scenes
+                    ALTER COLUMN visual_selected_for_scene_id TYPE UUID
+                    USING NULLIF(visual_selected_for_scene_id::text, '')::uuid
+                    """
+                )
+            )
+
     logger.info("scene schema migration complete")

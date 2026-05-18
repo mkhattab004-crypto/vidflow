@@ -17,6 +17,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+def _build_scene_for_script_generation(project_id: str, scene_data: dict) -> Scene:
+    scene = Scene(
+        project_id=project_id,
+        order=scene_data.get("order", 0),
+        script_text=scene_data.get("script_text", ""),
+        script_ar=scene_data.get("script_ar"),
+        duration=scene_data.get("duration", 5),
+        visual_query=scene_data.get("visual_query", ""),
+        visual_type=scene_data.get("visual_type", "stock"),
+        visual_url=None,
+        visual_source_url=None,
+        visual_metadata={},
+        visual_locked=False,
+        visual_selected_for_project_id=None,
+        visual_selected_for_scene_id=None,
+        visual_selected_at=None,
+        thumbnail_url=None,
+        transition=scene_data.get("transition", "fade"),
+        effects=scene_data.get("effects", []),
+    )
+    logger.info(
+        "creating scene project_id=%s visual_selected_for_project_id=%s visual_selected_for_scene_id=%s",
+        project_id,
+        scene.visual_selected_for_project_id,
+        scene.visual_selected_for_scene_id,
+    )
+    return scene
+
+
 async def _load_project(project_id: str, db: AsyncSession) -> Project:
     result = await db.execute(
         select(Project)
@@ -85,17 +114,7 @@ async def quick_generate(data: QuickGenerateRequest, db: AsyncSession = Depends(
     project.status = "content_generated"
 
     for scene_data in content.get("scenes", []):
-        db.add(Scene(
-            project_id=project.id,
-            order=scene_data.get("order", 0),
-            script_text=scene_data.get("script_text", ""),
-            script_ar=scene_data.get("script_ar"),
-            duration=scene_data.get("duration", 5),
-            visual_query=scene_data.get("visual_query", ""),
-            visual_type=scene_data.get("visual_type", "stock"),
-            transition=scene_data.get("transition", "fade"),
-            effects=scene_data.get("effects", []),
-        ))
+        db.add(_build_scene_for_script_generation(project.id, scene_data))
 
     await db.commit()
     logger.info(f"quick_generate: DONE committed project id={project.id} with {len(content.get('scenes', []))} scenes")
@@ -171,18 +190,7 @@ async def generate_content(project_id: str, db: AsyncSession = Depends(get_db)):
         await db.delete(sc)
 
     for scene_data in content.get("scenes", []):
-        scene = Scene(
-            project_id=project.id,
-            order=scene_data.get("order", 0),
-            script_text=scene_data.get("script_text", ""),
-            script_ar=scene_data.get("script_ar"),
-            duration=scene_data.get("duration", 5),
-            visual_query=scene_data.get("visual_query", ""),
-            visual_type=scene_data.get("visual_type", "stock"),
-            transition=scene_data.get("transition", "fade"),
-            effects=scene_data.get("effects", []),
-        )
-        db.add(scene)
+        db.add(_build_scene_for_script_generation(project.id, scene_data))
 
     await db.commit()
     return await _load_project(project_id, db)
