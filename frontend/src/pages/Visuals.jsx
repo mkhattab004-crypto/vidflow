@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { Image, Search, Zap, CheckCircle, AlertTriangle, ArrowRight, ExternalLink } from 'lucide-react'
@@ -12,7 +12,7 @@ const GAP_COLORS = { ok: 'badge-green', missing: 'badge-red', needs_ai: 'badge-p
 export default function Visuals() {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const { activeProjectId, setActiveProjectId } = useStore()
+  const { activeProjectId, setActiveProjectId, clearProjectUiState } = useStore()
   const [selectedScene, setSelectedScene] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [mediaType, setMediaType] = useState('video')
@@ -21,6 +21,12 @@ export default function Visuals() {
   const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: () => getProjects() })
   const { data: project } = useQuery({ queryKey: ['project', activeProjectId], queryFn: () => getProject(activeProjectId), enabled: !!activeProjectId })
   const { data: gapAnalysis } = useQuery({ queryKey: ['gaps', activeProjectId], queryFn: () => getVisualGaps(activeProjectId), enabled: !!activeProjectId })
+  useEffect(() => {
+    setSelectedScene(null)
+    setSearchResults([])
+    clearProjectUiState()
+    if (activeProjectId) qc.invalidateQueries({ queryKey: ['project', activeProjectId] })
+  }, [activeProjectId, clearProjectUiState, qc])
 
   const searchMutation = useMutation({
     mutationFn: () => searchVisuals({ query: searchQuery, media_type: mediaType, limit: 12 }),
@@ -29,7 +35,7 @@ export default function Visuals() {
   })
 
   const autoFillMutation = useMutation({
-    mutationFn: () => autoFillVisuals(activeProjectId),
+    mutationFn: () => autoFillVisuals(project?.id),
     onSuccess: (data) => { qc.invalidateQueries({ queryKey: ['gaps', activeProjectId] }); toast.success(`Auto-filled ${data.filled} scenes`) },
     onError: (e) => toast.error(e.message),
   })

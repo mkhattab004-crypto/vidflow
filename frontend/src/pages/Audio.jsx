@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { Mic, Play, ArrowRight } from 'lucide-react'
@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 export default function Audio() {
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const { activeProjectId, setActiveProjectId } = useStore()
+  const { activeProjectId, setActiveProjectId, clearProjectUiState } = useStore()
   const [selectedVoice, setSelectedVoice] = useState('')
   const [speed, setSpeed] = useState(1.0)
   const [previewText, setPreviewText] = useState('')
@@ -24,11 +24,17 @@ export default function Audio() {
   const { data: providerInfo } = useQuery({ queryKey: ['tts-provider', channelLanguage], queryFn: () => getTtsProvider(channelLanguage || 'en'), enabled: !!channelLanguage })
   const isIslamic = project?.is_islamic || project?.channel?.is_islamic || false
   const filteredVoices = voices.filter((v) => !v.language || v.language === channelLanguage || channelLanguage === 'en')
+  useEffect(() => {
+    setPreviewSrc('')
+    setSelectedVoice('')
+    clearProjectUiState()
+    if (activeProjectId) qc.invalidateQueries({ queryKey: ['project', activeProjectId] })
+  }, [activeProjectId, clearProjectUiState, qc])
 
   const genMutation = useMutation({
     mutationFn: () => {
       const scriptText = project.scenes.map((s) => s.script_text || '').join(' ')
-      return generateAudio({ project_id: activeProjectId, text: scriptText, voice_id: selectedVoice, speed })
+      return generateAudio({ project_id: project?.id, text: scriptText, voice_id: selectedVoice, speed })
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['project', activeProjectId] }); toast.success('Audio generated!') },
     onError: (e) => toast.error(e.message),

@@ -7,7 +7,9 @@ const useStore = create((set, get) => ({
 
   // Active project
   activeProjectId: null,
-  setActiveProjectId: (id) => set({ activeProjectId: id }),
+  projectUiState: { previewSrc: '', audioUrl: '', downloadUrl: '' },
+  setActiveProjectId: (id) => set({ activeProjectId: id, projectUiState: { previewSrc: '', audioUrl: '', downloadUrl: '' } }),
+  clearProjectUiState: () => set({ projectUiState: { previewSrc: '', audioUrl: '', downloadUrl: '' } }),
 
   // Workflow step (for project wizard)
   workflowStep: 'idea',

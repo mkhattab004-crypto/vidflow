@@ -9,8 +9,9 @@ import os
 import logging
 from app.database import get_db
 from app.models.project import Project, Scene
-from app.services.kokoro_tts import VOICES, generate_speech, _select_edge_tts_voice
+from app.services.kokoro_tts import VOICES, generate_speech, _select_edge_tts_voice, resolve_voice_for_project
 from app.services.audio_assembler import assemble_project_audio, generate_scene_timings
+from app.services.storage import ensure_project_dirs, get_project_audio_dir
 
 logger = logging.getLogger(__name__)
 
@@ -101,10 +102,8 @@ async def generate_audio(req: TTSRequest, background_tasks: BackgroundTasks, db:
     language = (project.language or (project.channel.language if project.channel else "en") or "en")
     normalized_language = (language or "").strip().lower()
 
-    selected_voice_id = req.voice_id
-    if normalized_language in {"ar", "arabic"} and req.voice_id == "ar-EG-SalmaNeural":
-        selected_voice_id = "edge_ar_default"
-        logger.info("project_language=ar overriding_legacy_female_default_voice requested_voice=%s selected_voice=%s", req.voice_id, selected_voice_id)
+    selected_voice_id, resolution = resolve_voice_for_project(language, req.voice_id, user_selected=bool(req.voice_id))
+    logger.info("current_project_id=%s project_title=%s project_language=%s selected_tts_provider=%s selected_tts_voice=%s voice_resolution=%s voice_gender=%s", req.project_id, project.title, language, "edge_tts", selected_voice_id, resolution, "male" if "default" in selected_voice_id else "unknown")
 
     # Update project immediately so the UI shows "processing"
     project.voice_id = selected_voice_id
@@ -140,6 +139,10 @@ async def _do_assemble(project_id: str, scenes_data: list, voice_id: str, speed:
             )
             project = await db.get(Project, project_id)
             if project:
+                ensure_project_dirs(project_id)
+                expected_audio = os.path.join(get_project_audio_dir(project_id), "narration.mp3")
+                if audio_path and audio_path != expected_audio:
+                    logger.info("narration_audio_valid_for_project=false current_project_id=%s audio_output_path=%s expected_audio_output_path=%s", project_id, audio_path, expected_audio)
                 project.audio_url = audio_path
                 project.status = "audio_ready"
                 await db.commit()
@@ -208,3 +211,5 @@ async def download_audio(project_id: str, db: AsyncSession = Depends(get_db)):
     if not os.path.exists(project.audio_url):
         raise HTTPException(status_code=404, detail="Audio file not found on disk")
     return FileResponse(project.audio_url, media_type="audio/mpeg", filename=f"{project_id}_narration.mp3")
+    if not req.project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")

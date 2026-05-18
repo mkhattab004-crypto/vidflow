@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { Download, FileText, Subtitles, FileJson, Video, Monitor, Smartphone, Square } from 'lucide-react'
@@ -16,15 +16,19 @@ function downloadBlob(blob, filename) {
 }
 
 export default function Export() {
-  const { activeProjectId, setActiveProjectId } = useStore()
+  const { activeProjectId, setActiveProjectId, clearProjectUiState } = useStore()
   const qc = useQueryClient()
   const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: () => getProjects() })
   const { data: project } = useQuery({ queryKey: ['project', activeProjectId], queryFn: () => getProject(activeProjectId), enabled: !!activeProjectId })
+  useEffect(() => {
+    clearProjectUiState()
+    if (activeProjectId) qc.invalidateQueries({ queryKey: ['project', activeProjectId] })
+  }, [activeProjectId, clearProjectUiState, qc])
   const shortFormTypes = new Set(['short_form', 'reels', 'tiktok', 'shorts'])
   const isShortFormProject = shortFormTypes.has((project?.video_type || '').toLowerCase())
 const renderMutation = useMutation({
   mutationFn: () => renderAllFormats({
-    project_id: activeProjectId,
+    project_id: project?.id,
     formats: isShortFormProject ? ['9:16', '16:9', '1:1'] : ['16:9', '9:16', '1:1'],
   }),
   onSuccess: () => {

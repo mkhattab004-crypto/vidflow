@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,24 @@ def _static_to_fs(url: Optional[str]) -> Optional[str]:
     if url and url.startswith("/static/"):
         return os.path.join(settings.UPLOAD_DIR, url[len("/static/"):])
     return url
+
+
+def _extract_project_id_from_path(path: Optional[str]) -> Optional[str]:
+    if not path:
+        return None
+    m = re.search(r"/projects/([^/]+)/", path.replace("\\", "/"))
+    return m.group(1) if m else None
+
+
+def _validate_project_asset_path(current_project_id: str, asset_path: Optional[str]) -> bool:
+    if not asset_path:
+        return False
+    normalized = asset_path.replace("\\", "/")
+    detected = _extract_project_id_from_path(normalized)
+    ok = f"/projects/{current_project_id}/" in normalized and (detected is None or detected == str(current_project_id))
+    if not ok:
+        logger.error("asset_project_mismatch current_project_id=%s asset_path=%s detected_asset_project_id=%s action=reject_and_regenerate", current_project_id, asset_path, detected)
+    return ok
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/video", tags=["video"])
@@ -70,6 +89,8 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
             fmt_name = aspect_ratio.replace(":", "x")
             output_name = {"16x9": "youtube_16x9.mp4", "9x16": "tiktok_9x16.mp4", "1x1": "instagram_1x1.mp4"}.get(fmt_name, f"output_{fmt_name}.mp4")
             output_path = os.path.join(output_dir, output_name)
+            if not _validate_project_asset_path(project_id, output_path):
+                raise RuntimeError("render_output_path invalid for project")
 
             scenes = sorted(project.scenes, key=lambda s: s.order)
             channel = project.channel
@@ -78,10 +99,12 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
             recovered_scene_count = 0
             unrecovered_scene_count = 0
             for scene in scenes:
+                visual_valid = _validate_project_asset_path(project_id, scene.visual_url) if scene.visual_url else False
+                logger.info("scene_id=%s scene_project_id=%s current_project_id=%s visual_asset_valid_for_project=%s", scene.id, scene.project_id, project_id, visual_valid)
                 vurl = scene.visual_url or ""
                 is_local_path = bool(vurl) and not vurl.startswith("http://") and not vurl.startswith("https://")
                 missing_local = is_local_path and not os.path.exists(vurl)
-                if not missing_local:
+                if visual_valid and not missing_local:
                     continue
 
                 logger.warning(
@@ -149,8 +172,14 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
             )
             await db.commit()
 
+            audio_valid = _validate_project_asset_path(project_id, project.audio_url) if project.audio_url else False
+            if project.audio_url and not audio_valid:
+                logger.info("narration_audio_valid_for_project=false regenerated_current_project_audio=true")
+                project.audio_url = None
             if project.audio_url and not project.audio_url.startswith(("http://", "https://")) and not os.path.exists(project.audio_url):
                 logger.warning("narration audio missing: project_id=%s audio_url=%s", project_id, project.audio_url)
+                project.audio_url = None
+            if not project.audio_url:
                 scenes_audio_data = [{"id": s.id, "script_text": s.script_text or "", "duration": s.duration} for s in scenes]
                 regenerated_audio = await assemble_project_audio(
                     scenes=scenes_audio_data,
@@ -162,7 +191,7 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
                 if regenerated_audio:
                     project.audio_url = regenerated_audio
                     await db.commit()
-                    logger.info("recovered_audio=true saved_audio_path=%s", regenerated_audio)
+                    logger.info("narration_audio_valid_for_project=true regenerated_current_project_audio=true recovered_audio=true saved_audio_path=%s", regenerated_audio)
                 else:
                     logger.warning("recovered_audio=false project_id=%s", project_id)
 
@@ -299,6 +328,8 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool):
 
 @router.post("/render")
 async def render_video(req: RenderRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    if not req.project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
     project = await db.get(Project, req.project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -314,6 +345,8 @@ async def render_video(req: RenderRequest, background_tasks: BackgroundTasks, db
 @router.post("/render-all-formats")
 async def render_all_formats(req: MultiFormatRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Render the video in multiple formats at once."""
+    if not req.project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
     project = await db.get(Project, req.project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
