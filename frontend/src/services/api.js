@@ -78,7 +78,7 @@ export const getExportBundle  = (id)             => api.get(`/projects/${id}/exp
 
 export const searchVisuals  = (params)          => api.get('/visuals/search', { params }).then(r => r.data)
 export const assignVisual   = (params)          => api.post('/visuals/assign', null, { params }).then(r => r.data)
-export const autoFillVisuals = (pid, niche)     => api.post(`/visuals/auto-fill/${pid}`, null, { params: { niche } }).then(r => r.data)
+export const autoFillVisuals = (pid, niche, forceRefresh = true)     => api.post(`/visuals/auto-fill/${pid}`, null, { params: { niche, force_refresh: forceRefresh } }).then(r => r.data)
 export const getVisualGaps  = (pid)             => api.get(`/visuals/gap-analysis/${pid}`).then(r => r.data)
 
 // ── Audio ─────────────────────────────────────────────────────────────────────
