@@ -1,10 +1,13 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy import text
 from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
+import logging
 
 
 engine = create_async_engine(settings.DATABASE_URL, echo=False)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -23,3 +26,35 @@ async def create_tables():
     async with engine.begin() as conn:
         from app.models import channel, project  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
+
+
+async def migrate_scenes_schema():
+    logger.info("checking scenes schema columns")
+    scene_column_statements = [
+        ("visual_source_url", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_source_url TEXT NULL"),
+        ("visual_metadata", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_metadata JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("visual_locked", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_locked BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("visual_selected_for_project_id", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_selected_for_project_id UUID NULL"),
+        ("visual_selected_for_scene_id", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_selected_for_scene_id UUID NULL"),
+        ("visual_selected_at", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_selected_at TIMESTAMP NULL"),
+        ("thumbnail_url", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_url TEXT NULL"),
+    ]
+
+    async with engine.begin() as conn:
+        for column_name, stmt in scene_column_statements:
+            before_exists = await conn.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'scenes' AND column_name = :column_name
+                    """
+                ),
+                {"column_name": column_name},
+            )
+            was_present = before_exists.scalar() == 1
+            await conn.execute(text(stmt))
+            if not was_present:
+                logger.info("added missing scene column %s", column_name)
+
+    logger.info("scene schema migration complete")
