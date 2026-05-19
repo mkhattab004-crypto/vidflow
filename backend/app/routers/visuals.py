@@ -345,15 +345,10 @@ async def refill_scene_visual(
         return False
 
     selected_project_uuid = None
-    selected_scene_uuid = None
     try:
         selected_project_uuid = normalize_uuid(project.id, "project.id")
     except ValueError:
         selected_project_uuid = None
-    try:
-        selected_scene_uuid = normalize_uuid(scene.id, "scene.id")
-    except ValueError:
-        selected_scene_uuid = None
 
     scene.visual_url = downloaded_path
     scene.visual_source_url = selected_remote_url
@@ -361,7 +356,7 @@ async def refill_scene_visual(
     scene.visual_status = "suggested"
     scene.visual_locked = False
     scene.visual_selected_for_project_id = selected_project_uuid
-    scene.visual_selected_for_scene_id = selected_scene_uuid
+    scene.visual_selected_for_scene_id = scene.id
     scene.visual_selected_at = datetime.utcnow()
     scene.visual_metadata = {"generated_visual_query": generated_query}
     scene.thumbnail_url = None
@@ -431,12 +426,8 @@ async def assign_visual(
         selected_project_uuid = normalize_uuid(scene.project_id, "scene.project_id")
     except ValueError:
         selected_project_uuid = None
-    try:
-        selected_scene_uuid = normalize_uuid(scene.id, "scene.id")
-    except ValueError:
-        selected_scene_uuid = None
     scene.visual_selected_for_project_id = selected_project_uuid
-    scene.visual_selected_for_scene_id = selected_scene_uuid
+    scene.visual_selected_for_scene_id = scene.id
     scene.visual_selected_at = datetime.utcnow()
     logger.info(
         "visual_assignment_debug project_id=%s scene_id=%s project_id_type=%s scene_id_type=%s visual_selected_for_project_id=%s visual_selected_for_project_id_type=%s visual_selected_for_scene_id=%s visual_selected_for_scene_id_type=%s visual_metadata_type=%s visual_source_url=%s",

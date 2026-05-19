@@ -21,6 +21,20 @@ MIN_NORMALIZED_DURATION_SECONDS = 2.0
 MIN_VALID_CLIP_PROBE_SECONDS = 0.25
 MIN_NORMALIZED_CLIP_SIZE_BYTES = 5_000
 MIN_FINAL_OUTPUT_SIZE_BYTES = 20_000
+_storage_cleanup_callback = None
+_last_no_space_error = False
+
+
+def configure_storage_cleanup_callback(callback):
+    global _storage_cleanup_callback
+    _storage_cleanup_callback = callback
+
+
+def consume_no_space_error_flag() -> bool:
+    global _last_no_space_error
+    had_error = _last_no_space_error
+    _last_no_space_error = False
+    return had_error
 
 
 def _run(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
@@ -38,7 +52,22 @@ def _run(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
 
 async def _run_async(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
     """Run FFmpeg in a thread pool so it doesn't block the async event loop."""
-    return await asyncio.to_thread(_run, cmd, timeout)
+    global _last_no_space_error
+    ok, err = await asyncio.to_thread(_run, cmd, timeout)
+    if ok:
+        return ok, err
+    stderr = err or ""
+    if "No space left on device" in stderr and _storage_cleanup_callback is not None:
+        logger.warning("ffmpeg_no_space_detected retrying_once=true cmd=%s", " ".join(cmd[:8]))
+        try:
+            await _storage_cleanup_callback()
+        except Exception as cleanup_err:
+            logger.error("storage_cleanup_callback_failed: %s", cleanup_err)
+        retry_ok, retry_err = await asyncio.to_thread(_run, cmd, timeout)
+        if not retry_ok and "No space left on device" in (retry_err or ""):
+            _last_no_space_error = True
+        return retry_ok, retry_err
+    return ok, err
 
 
 async def run_ffmpeg_diagnostic(cmd: list[str]) -> tuple[bool, str]:

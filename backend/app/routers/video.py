@@ -15,6 +15,8 @@ from app.database import get_db
 from app.models.project import Project
 from app.services.video_processor import (
     compose_video,
+    configure_storage_cleanup_callback,
+    consume_no_space_error_flag,
     convert_aspect_ratio,
     generate_srt,
     render_diagnostic_video,
@@ -23,7 +25,7 @@ from app.services.video_processor import (
 from app.services.audio_assembler import generate_scene_timings, assemble_project_audio
 from app.services.n8n_service import notify_video_ready
 from app.config import settings
-from app.services.storage import ensure_project_dirs, get_project_renders_dir
+from app.services.storage import ensure_project_dirs, get_project_renders_dir, cleanup_project_storage
 from app.routers.visuals import (
     _detect_islamic_visual_profile,
     refill_scene_visual,
@@ -85,6 +87,10 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool, r
                 return
 
             ensure_project_dirs(project_id)
+            cleanup_project_storage(project_id)
+            async def _cleanup_on_no_space():
+                cleanup_project_storage(project_id)
+            configure_storage_cleanup_callback(_cleanup_on_no_space)
             logger.info("current_project_id=%s render_job_id=%s using_existing_output_as_input=false", project_id, render_job_id)
             output_dir = get_project_renders_dir(project_id)
             os.makedirs(output_dir, exist_ok=True)
@@ -307,6 +313,7 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool, r
                 logo_path=_static_to_fs(channel.logo_url if channel else None),
                 logo_position=project.template_config.get("logo_position", "top-right"),
             )
+            configure_storage_cleanup_callback(None)
 
             if ok:
                 video_tmp_created_for_current_render = os.path.exists(output_path)
@@ -344,6 +351,8 @@ async def _do_render(project_id: str, aspect_ratio: str, burn_subtitles: bool, r
                     output_url=output_path,
                 )
             else:
+                if consume_no_space_error_flag():
+                    raise RuntimeError("Storage full. Please delete old projects/renders or increase Railway volume size.")
                 if aspect_ratio == "16:9":
                     project.output_url = None
                 elif aspect_ratio == "9:16":

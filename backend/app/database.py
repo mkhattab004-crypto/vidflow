@@ -35,7 +35,7 @@ async def migrate_scenes_schema():
         ("visual_metadata", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_metadata JSONB NOT NULL DEFAULT '{}'::jsonb"),
         ("visual_locked", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_locked BOOLEAN NOT NULL DEFAULT FALSE"),
         ("visual_selected_for_project_id", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_selected_for_project_id UUID NULL"),
-        ("visual_selected_for_scene_id", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_selected_for_scene_id UUID NULL"),
+        ("visual_selected_for_scene_id", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_selected_for_scene_id INTEGER NULL"),
         ("visual_selected_at", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS visual_selected_at TIMESTAMP NULL"),
         ("thumbnail_url", "ALTER TABLE scenes ADD COLUMN IF NOT EXISTS thumbnail_url TEXT NULL"),
     ]
@@ -81,14 +81,21 @@ async def migrate_scenes_schema():
                 )
             )
 
-        if column_types.get("visual_selected_for_scene_id") != "uuid":
-            logger.info("coercing scenes.visual_selected_for_scene_id to UUID")
+        if column_types.get("visual_selected_for_scene_id") != "integer":
+            logger.info("coercing scenes.visual_selected_for_scene_id to INTEGER")
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE scenes ALTER COLUMN visual_selected_for_scene_id DROP DEFAULT
+                    """
+                )
+            )
             await conn.execute(
                 text(
                     """
                     ALTER TABLE scenes
-                    ALTER COLUMN visual_selected_for_scene_id TYPE UUID
-                    USING NULLIF(visual_selected_for_scene_id::text, '')::uuid
+                    ALTER COLUMN visual_selected_for_scene_id TYPE INTEGER
+                    USING NULL
                     """
                 )
             )
