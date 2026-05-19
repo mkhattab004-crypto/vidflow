@@ -69,7 +69,7 @@ class Scene(Base):
     visual_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
     visual_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     visual_selected_for_project_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=True)
-    visual_selected_for_scene_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=True)
+    visual_selected_for_scene_id: Mapped[int] = mapped_column(Integer, nullable=True)
     visual_selected_at = mapped_column(DateTime(timezone=True), nullable=True)
     thumbnail_url: Mapped[str] = mapped_column(String(500), nullable=True)
     on_screen_source: Mapped[str] = mapped_column(String(500), nullable=True)
