@@ -60,7 +60,7 @@ class Scene(Base):
     script_text: Mapped[str] = mapped_column(Text, nullable=True)
     script_ar: Mapped[str] = mapped_column(Text, nullable=True)
     duration: Mapped[float] = mapped_column(Float, default=5.0)
-    visual_query: Mapped[str] = mapped_column(String(500), nullable=True)
+    visual_query: Mapped[str] = mapped_column(Text, nullable=True)
     visual_type: Mapped[str] = mapped_column(String(50), default="stock")
     visual_status: Mapped[str] = mapped_column(String(50), default="pending")
     visual_url: Mapped[str] = mapped_column(String(500), nullable=True)

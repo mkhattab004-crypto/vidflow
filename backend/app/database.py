@@ -100,6 +100,7 @@ async def migrate_scenes_schema():
                 FROM information_schema.columns
                 WHERE table_name = 'scenes'
                   AND column_name IN (
+                    'visual_query',
                     'visual_source_url',
                     'visual_metadata',
                     'visual_locked',
@@ -110,6 +111,12 @@ async def migrate_scenes_schema():
             )
         )
         full_column_types = {row.column_name: row.data_type for row in full_type_rows}
+
+        visual_query_type = full_column_types.get("visual_query")
+        logger.info("checking visual_query column type: %s", visual_query_type)
+        if visual_query_type != "text":
+            await conn.execute(text("ALTER TABLE scenes ALTER COLUMN visual_query TYPE TEXT"))
+            logger.info("visual_query column migrated to TEXT")
 
         if full_column_types.get("visual_source_url") not in {"text", "character varying"}:
             logger.info("coercing scenes.visual_source_url to TEXT")
