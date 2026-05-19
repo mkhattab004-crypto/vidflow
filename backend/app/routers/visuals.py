@@ -187,6 +187,29 @@ def _build_scene_visual_query(project: Project, scene: Scene) -> str:
     return re.sub(r"\s+", " ", query).strip()
 
 
+def _build_search_query(generated_query: str, max_length: int = 180) -> str:
+    cleaned = re.sub(r"[^\w\s-]", " ", generated_query)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) <= max_length:
+        return cleaned
+
+    keywords = [token for token in re.split(r"\s+", cleaned) if len(token) > 2]
+    prioritized = []
+    seen = set()
+    for token in keywords:
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        prioritized.append(token)
+        if len(" ".join(prioritized)) >= max_length:
+            break
+    shortened = " ".join(prioritized).strip()
+    if not shortened:
+        shortened = cleaned[:max_length]
+    return shortened[:max_length].strip()
+
+
 def _scene_visual_owned_by_project(scene: Scene, project_id: str) -> bool:
     return bool(
         scene.visual_selected_for_project_id == project_id
@@ -205,6 +228,7 @@ async def refill_scene_visual(
     used_asset_urls = used_asset_urls or set()
     generated_query = _build_scene_visual_query(project, scene)
     scene.visual_query = generated_query
+    logger.info("generated_visual_query_length=%s", len(generated_query or ""))
     if not generated_query:
         scene.visual_status = "missing_query"
         return False
@@ -214,11 +238,13 @@ async def refill_scene_visual(
     selected_attribution = None
     selected_remote_url = None
 
-    query_to_use = generated_query
+    query_to_use = _build_search_query(generated_query)
+    logger.info("search_query_used=%s", query_to_use)
     if is_islamic_profile:
-        query_to_use = _rewrite_safe_query(scene.visual_query)
+        query_to_use = _build_search_query(_rewrite_safe_query(scene.visual_query))
         logger.info("original_visual_query=%s", scene.visual_query)
         logger.info("rewritten_safe_query=%s", query_to_use)
+        logger.info("search_query_used=%s", query_to_use)
 
     logger.info("trying pexels videos")
     video_candidates = await pexels.search_videos(query_to_use, per_page=3)
