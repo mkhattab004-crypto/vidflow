@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     EDGE_TTS_VOICE_EN: Optional[str] = None
     EDGE_TTS_VOICE_TR: Optional[str] = None
     EDGE_TTS_VOICE: Optional[str] = None
+    FREE_TTS_API_URL: Optional[str] = None
+    FREE_TTS_API_KEY: Optional[str] = None
+    FREE_TTS_PROVIDER_NAME: Optional[str] = None
 
     # Optional external services
     N8N_WEBHOOK_URL: Optional[str] = None
