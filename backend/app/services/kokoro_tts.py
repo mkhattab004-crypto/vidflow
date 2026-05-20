@@ -2,6 +2,9 @@ import os
 import hashlib
 import logging
 import subprocess
+import json
+import urllib.request
+import urllib.error
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -110,17 +113,29 @@ async def generate_speech(text: str, voice_id: str, speed: float = 1.0, output_d
     if os.path.exists(output_path) and _valid_audio_file(output_path):
         return output_path
 
+    log_prefix = (
+        "project_language=%s selected_tts_provider=%s selected_tts_voice=%s voice_gender=%s "
+        "tts_engine_function_called=%s fallback_used=%s"
+    )
+
     if provider == "edge_tts":
         try:
             import edge_tts
 
-            logger.info("project_language=%s selected_tts_voice=%s voice_gender=%s", language, selected_voice, _voice_gender(selected_voice))
+            logger.info(
+                log_prefix,
+                language,
+                provider,
+                selected_voice,
+                _voice_gender(selected_voice),
+                "edge_tts.Communicate",
+                "false",
+            )
             communicate = edge_tts.Communicate(text=text, voice=selected_voice, rate=f"{int((speed - 1.0) * 100):+d}%")
             await communicate.save(output_path)
             logger.info(
-                "tts generated provider=%s project_language=%s selected_tts_voice=%s generated_audio_path=%s audio_size_bytes=%s audio_duration_seconds=%.3f",
-                provider,
-                language,
+                "provider_that_generated_audio=%s voice_that_generated_audio=%s audio_output_path=%s audio_size_bytes=%s audio_duration_seconds=%.3f",
+                "edge_tts",
                 selected_voice,
                 output_path,
                 os.path.getsize(output_path) if os.path.exists(output_path) else 0,
@@ -130,27 +145,51 @@ async def generate_speech(text: str, voice_id: str, speed: float = 1.0, output_d
                 return output_path
             raise RuntimeError("edge_tts output failed validation")
         except Exception as e:
-            logger.error("edge_tts failed, falling back provider=fallback error=%s", str(e), exc_info=True)
+            logger.error("edge_tts failed with error=%s", str(e), exc_info=True)
+            raise RuntimeError(f"Edge TTS failed: {e}") from e
 
-    try:
-        from gtts import gTTS
+    if provider == "free_api":
+        api_url = (settings.FREE_TTS_API_URL or "").strip()
+        if not api_url:
+            raise RuntimeError("FREE_TTS_API_URL is required when TTS_PROVIDER=free_api")
+        provider_name = (settings.FREE_TTS_PROVIDER_NAME or "free_api").strip() or "free_api"
+        headers = {"Content-Type": "application/json"}
+        if settings.FREE_TTS_API_KEY:
+            headers["Authorization"] = f"Bearer {settings.FREE_TTS_API_KEY}"
 
-        lang = _normalize_lang(language)
-        tts = gTTS(text=text, lang=(lang if lang in {"ar", "en", "tr"} else "en"), slow=(speed < 0.8))
-        tts.save(output_path)
-        logger.warning(
-            "fallback_provider_used provider=gtts selected_fallback_voice=language_only voice_gender=unknown male_voice_not_available_for_fallback_provider=true project_language=%s",
-            language,
-        )
         logger.info(
-            "tts generated provider=fallback project_language=%s selected_tts_voice=%s voice_gender=unknown generated_audio_path=%s audio_size_bytes=%s audio_duration_seconds=%.3f",
+            log_prefix,
             language,
+            provider,
             selected_voice,
-            output_path,
-            os.path.getsize(output_path) if os.path.exists(output_path) else 0,
-            _probe_duration(output_path),
+            _voice_gender(selected_voice),
+            "external_free_tts_api",
+            "false",
         )
-        return output_path
-    except Exception as e:
-        logger.error("fallback tts failed: %s", str(e), exc_info=True)
-        return ""
+        payload = json.dumps({"text": text, "language": _normalize_lang(language), "voice": selected_voice, "speed": speed}).encode("utf-8")
+        req = urllib.request.Request(api_url, data=payload, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                if resp.status < 200 or resp.status >= 300:
+                    raise RuntimeError(f"free api returned status={resp.status}")
+                data = resp.read()
+            if not data:
+                raise RuntimeError("free api returned empty body")
+            with open(output_path, "wb") as f:
+                f.write(data)
+            if not _valid_audio_file(output_path):
+                raise RuntimeError("free api audio output failed validation")
+            logger.info(
+                "provider_that_generated_audio=%s voice_that_generated_audio=%s audio_output_path=%s audio_size_bytes=%s audio_duration_seconds=%.3f",
+                provider_name,
+                selected_voice,
+                output_path,
+                os.path.getsize(output_path),
+                _probe_duration(output_path),
+            )
+            return output_path
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, RuntimeError) as e:
+            logger.error("free_api tts failed provider=%s error=%s", provider_name, str(e), exc_info=True)
+            raise RuntimeError(f"Free TTS API failed: {e}") from e
+
+    raise RuntimeError(f"Unsupported TTS_PROVIDER '{provider}'. Allowed: edge_tts, free_api")

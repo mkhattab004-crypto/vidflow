@@ -58,6 +58,11 @@ export default function Audio() {
       <h1 className="page-title">Audio — {project?.title}</h1>
       <p className="page-subtitle">Select a voice and generate the narration</p>
       <p className="text-sm text-slate-400 mb-2">TTS Provider: {providerInfo?.tts_provider || 'edge_tts'} · Voice: {providerInfo?.selected_tts_voice || 'en-US-GuyNeural'}</p>
+      {(providerInfo?.provider_warning || !['edge_tts', 'free_api'].includes((providerInfo?.tts_provider || '').toLowerCase())) && (
+        <p className="text-xs text-amber-300 mb-3">
+          ⚠️ {providerInfo?.provider_warning || 'Unknown provider configured. Audio may fail until TTS_PROVIDER is set to edge_tts or free_api.'}
+        </p>
+      )}
 
       <div className="card mb-4">
         <h3 className="section-title flex items-center gap-2"><Mic size={16} /> Voice Selection</h3>

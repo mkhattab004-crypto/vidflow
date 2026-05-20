@@ -61,11 +61,16 @@ async def voices_by_language():
 @router.get("/provider")
 async def tts_provider(language: str = "en"):
     from app.config import settings
-    provider = (settings.TTS_PROVIDER or "edge_tts")
+    provider = (settings.TTS_PROVIDER or "edge_tts").strip().lower()
+    selected_voice = _select_edge_tts_voice(language)
+    is_known = provider in {"edge_tts", "free_api"}
     return {
         "tts_provider": provider,
         "project_language": language,
-        "selected_tts_voice": _select_edge_tts_voice(language),
+        "selected_tts_voice": selected_voice,
+        "voice_gender": "male" if any(v in selected_voice.lower() for v in ["shakir", "guy", "ahmet"]) else "unknown",
+        "fallback_used": False,
+        "provider_warning": None if is_known else "Unknown or fallback provider configured. Check TTS_PROVIDER.",
     }
 @router.get("/preview")
 async def preview_voice(text: str, voice_id: str, speed: float = 1.0):
@@ -103,7 +108,18 @@ async def generate_audio(req: TTSRequest, background_tasks: BackgroundTasks, db:
     normalized_language = (language or "").strip().lower()
 
     selected_voice_id, resolution = resolve_voice_for_project(language, req.voice_id, user_selected=bool(req.voice_id))
-    logger.info("current_project_id=%s project_title=%s project_language=%s selected_tts_provider=%s selected_tts_voice=%s voice_resolution=%s voice_gender=%s", req.project_id, project.title, language, "edge_tts", selected_voice_id, resolution, "male" if "default" in selected_voice_id else "unknown")
+    from app.config import settings
+    selected_provider = (settings.TTS_PROVIDER or "edge_tts").strip().lower()
+    logger.info(
+        "project_id=%s project_language=%s selected_tts_provider=%s selected_voice=%s voice_gender=%s tts_engine_function_called=%s fallback_used=false voice_resolution=%s",
+        req.project_id,
+        language,
+        (selected_provider if selected_provider in {"edge_tts", "free_api"} else "edge_tts"),
+        selected_voice_id,
+        "male" if any(m in selected_voice_id.lower() for m in ["shakir", "guy", "ahmet"]) else "unknown",
+        "generate_speech",
+        resolution,
+    )
 
     # Update project immediately so the UI shows "processing"
     project.voice_id = selected_voice_id
