@@ -32,13 +32,32 @@ def _valid_audio_file(path: str) -> bool:
     return bool(path and os.path.exists(path) and os.path.getsize(path) > 5_000 and _probe_duration(path) > 0.5)
 
 
-async def assemble_project_audio(scenes: list[dict], voice_id: str, speed: float, project_id: str, language: str = "en", bg_music_path: Optional[str] = None) -> str:
+async def assemble_project_audio(
+    scenes: list[dict],
+    voice_id: str,
+    speed: float,
+    project_id: str,
+    language: str = "en",
+    bg_music_path: Optional[str] = None,
+    provider_override: Optional[str] = None,
+) -> str:
     ensure_project_dirs(project_id)
     out_dir = get_project_audio_dir(project_id)
     os.makedirs(out_dir, exist_ok=True)
     final_path = os.path.join(out_dir, "narration.mp3")
 
-    tasks = [_generate_scene_audio(scene["script_text"] or "", voice_id, speed, out_dir, scene.get("id", i), language) for i, scene in enumerate(scenes)]
+    tasks = [
+        _generate_scene_audio(
+            scene["script_text"] or "",
+            voice_id,
+            speed,
+            out_dir,
+            scene.get("id", i),
+            language,
+            provider_override=provider_override,
+        )
+        for i, scene in enumerate(scenes)
+    ]
     scene_paths = await asyncio.gather(*tasks)
     valid_paths = [p for p in scene_paths if _valid_audio_file(p)]
     if not valid_paths:
@@ -66,12 +85,20 @@ async def assemble_project_audio(scenes: list[dict], voice_id: str, speed: float
     return final_path if _valid_audio_file(final_path) else ""
 
 
-async def _generate_scene_audio(text: str, voice_id: str, speed: float, out_dir: str, scene_id, language: str) -> Optional[str]:
+async def _generate_scene_audio(
+    text: str,
+    voice_id: str,
+    speed: float,
+    out_dir: str,
+    scene_id,
+    language: str,
+    provider_override: Optional[str] = None,
+) -> Optional[str]:
     if not text.strip():
         return None
     fname = f"scene_{scene_id}_{hashlib.md5(text[:50].encode()).hexdigest()[:8]}.mp3"
     path = os.path.join(out_dir, fname)
-    generated = await generate_speech(text, voice_id, speed, out_dir, language=language)
+    generated = await generate_speech(text, voice_id, speed, out_dir, language=language, provider_override=provider_override)
     if generated and _valid_audio_file(generated):
         logger.info(
             "scene_id=%s generated_audio_path=%s audio_size_bytes=%s audio_duration_seconds=%.3f",

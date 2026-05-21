@@ -7,9 +7,10 @@ from pydantic import BaseModel
 from typing import Optional
 import os
 import logging
+from app.config import settings
 from app.database import get_db
 from app.models.project import Project, Scene
-from app.services.kokoro_tts import VOICES, generate_speech, _select_edge_tts_voice, resolve_voice_for_project
+from app.services.kokoro_tts import VOICES, generate_speech, _select_edge_tts_voice, _select_gtts_voice, resolve_voice_for_project
 from app.services.audio_assembler import assemble_project_audio, generate_scene_timings
 from app.services.storage import ensure_project_dirs, get_project_audio_dir
 
@@ -22,6 +23,7 @@ class TTSRequest(BaseModel):
     project_id: str
     voice_id: str
     speed: float = 1.0
+    tts_provider: Optional[str] = None
     mode: str = "full"  # "full" = assemble all scenes | "scene" = single scene
 
 
@@ -62,8 +64,8 @@ async def voices_by_language():
 async def tts_provider(language: str = "en"):
     from app.config import settings
     provider = (settings.TTS_PROVIDER or "edge_tts").strip().lower()
-    selected_voice = _select_edge_tts_voice(language)
-    is_known = provider in {"edge_tts", "free_api"}
+    selected_voice = _select_gtts_voice(language) if provider == "gtts" else _select_edge_tts_voice(language)
+    is_known = provider in {"edge_tts", "gtts", "free_api"}
     return {
         "tts_provider": provider,
         "project_language": language,
@@ -105,16 +107,17 @@ async def generate_audio(req: TTSRequest, background_tasks: BackgroundTasks, db:
     channel = project.channel
     bg_music = getattr(channel, "bg_music_url", None) if channel else None
     language = (project.language or (project.channel.language if project.channel else "en") or "en")
-    normalized_language = (language or "").strip().lower()
-
-    selected_voice_id, resolution = resolve_voice_for_project(language, req.voice_id, user_selected=bool(req.voice_id))
-    from app.config import settings
-    selected_provider = (settings.TTS_PROVIDER or "edge_tts").strip().lower()
+    selected_provider = (req.tts_provider or settings.TTS_PROVIDER or "edge_tts").strip().lower()
+    if selected_provider == "gtts":
+        selected_voice_id = (req.voice_id or _select_gtts_voice(language)).strip() or _select_gtts_voice(language)
+        resolution = "gtts_selected"
+    else:
+        selected_voice_id, resolution = resolve_voice_for_project(language, req.voice_id, user_selected=bool(req.voice_id))
     logger.info(
         "project_id=%s project_language=%s selected_tts_provider=%s selected_voice=%s voice_gender=%s tts_engine_function_called=%s fallback_used=false voice_resolution=%s",
         req.project_id,
         language,
-        (selected_provider if selected_provider in {"edge_tts", "free_api"} else "edge_tts"),
+        (selected_provider if selected_provider in {"edge_tts", "gtts", "free_api"} else "edge_tts"),
         selected_voice_id,
         "male" if any(m in selected_voice_id.lower() for m in ["shakir", "guy", "ahmet"]) else "unknown",
         "generate_speech",
@@ -135,12 +138,13 @@ async def generate_audio(req: TTSRequest, background_tasks: BackgroundTasks, db:
         speed=req.speed,
         bg_music=bg_music,
         language=language,
+        provider=selected_provider,
     )
 
     return {"status": "audio_generating", "project_id": req.project_id, "scenes": len(scenes_data)}
 
 
-async def _do_assemble(project_id: str, scenes_data: list, voice_id: str, speed: float, bg_music: Optional[str], language: str):
+async def _do_assemble(project_id: str, scenes_data: list, voice_id: str, speed: float, bg_music: Optional[str], language: str, provider: str):
     """Background task: assemble audio and update project."""
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
@@ -152,6 +156,7 @@ async def _do_assemble(project_id: str, scenes_data: list, voice_id: str, speed:
                 project_id=project_id,
                 bg_music_path=bg_music,
                 language=language,
+                provider_override=provider,
             )
             project = await db.get(Project, project_id)
             if project:
