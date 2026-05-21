@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     FREE_TTS_API_URL: Optional[str] = None
     FREE_TTS_API_KEY: Optional[str] = None
     FREE_TTS_PROVIDER_NAME: Optional[str] = None
+    TTS_FALLBACK_ENABLED: bool = False
 
     # Optional external services
     N8N_WEBHOOK_URL: Optional[str] = None

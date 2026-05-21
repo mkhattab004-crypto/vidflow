@@ -12,6 +12,7 @@ export default function Audio() {
   const qc = useQueryClient()
   const { activeProjectId, setActiveProjectId, clearProjectUiState } = useStore()
   const [selectedVoice, setSelectedVoice] = useState('')
+  const [selectedProvider, setSelectedProvider] = useState('edge_tts')
   const [speed, setSpeed] = useState(1.0)
   const [previewText, setPreviewText] = useState('')
   const [previewSrc, setPreviewSrc] = useState('')
@@ -30,11 +31,14 @@ export default function Audio() {
     clearProjectUiState()
     if (activeProjectId) qc.invalidateQueries({ queryKey: ['project', activeProjectId] })
   }, [activeProjectId, clearProjectUiState, qc])
+  useEffect(() => {
+    if (providerInfo?.tts_provider) setSelectedProvider(providerInfo.tts_provider)
+  }, [providerInfo?.tts_provider])
 
   const genMutation = useMutation({
     mutationFn: () => {
       const scriptText = project.scenes.map((s) => s.script_text || '').join(' ')
-      return generateAudio({ project_id: project?.id, text: scriptText, voice_id: selectedVoice, speed })
+      return generateAudio({ project_id: project?.id, text: scriptText, voice_id: selectedVoice, speed, tts_provider: selectedProvider })
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['project', activeProjectId] }); toast.success('Audio generated!') },
     onError: (e) => toast.error(e.message),
@@ -51,14 +55,20 @@ export default function Audio() {
   }
 
   const RECITER_VOICES = voices.filter((v) => v.type === 'reciter')
-  const REGULAR_VOICES = voices.filter((v) => v.type !== 'reciter')
+  const REGULAR_VOICES = voices.filter((v) => v.type !== 'reciter' && !v.id.startsWith('gtts-'))
+  const GTTS_VOICES = [
+    { id: 'gtts-ar', name: 'Arabic gTTS', language: 'ar' },
+    { id: 'gtts-en', name: 'English gTTS', language: 'en' },
+    { id: 'gtts-tr', name: 'Turkish gTTS', language: 'tr' },
+  ]
+  const visibleVoices = selectedProvider === 'gtts' ? GTTS_VOICES : REGULAR_VOICES
 
   return (
     <div className="max-w-2xl">
       <h1 className="page-title">Audio — {project?.title}</h1>
       <p className="page-subtitle">Select a voice and generate the narration</p>
-      <p className="text-sm text-slate-400 mb-2">TTS Provider: {providerInfo?.tts_provider || 'edge_tts'} · Voice: {providerInfo?.selected_tts_voice || 'en-US-GuyNeural'}</p>
-      {(providerInfo?.provider_warning || !['edge_tts', 'free_api'].includes((providerInfo?.tts_provider || '').toLowerCase())) && (
+      <p className="text-sm text-slate-400 mb-2">TTS Provider: {selectedProvider || 'edge_tts'} · Voice: {selectedVoice || providerInfo?.selected_tts_voice || 'en-US-GuyNeural'}</p>
+      {(providerInfo?.provider_warning || !['edge_tts', 'gtts', 'free_api'].includes((providerInfo?.tts_provider || '').toLowerCase())) && (
         <p className="text-xs text-amber-300 mb-3">
           ⚠️ {providerInfo?.provider_warning || 'Unknown provider configured. Audio may fail until TTS_PROVIDER is set to edge_tts or free_api.'}
         </p>
@@ -66,6 +76,11 @@ export default function Audio() {
 
       <div className="card mb-4">
         <h3 className="section-title flex items-center gap-2"><Mic size={16} /> Voice Selection</h3>
+        <label className="label">Provider</label>
+        <select className="input mb-3" value={selectedProvider} onChange={(e) => { setSelectedProvider(e.target.value); setSelectedVoice('') }}>
+          <option value="edge_tts">Edge TTS</option>
+          <option value="gtts">gTTS Free</option>
+        </select>
         {isIslamic && RECITER_VOICES.length > 0 && (
           <div className="mb-4">
             <label className="label">Quran Reciters</label>
@@ -80,7 +95,7 @@ export default function Audio() {
         )}
         <label className="label">Narrator Voices</label>
         <div className="grid grid-cols-2 gap-2">
-          {REGULAR_VOICES.map((v) => (
+          {visibleVoices.map((v) => (
             <button key={v.id} onClick={() => setSelectedVoice(v.id)} className={`p-3 rounded-lg text-sm border text-left transition-all ${selectedVoice === v.id ? 'border-brand-600 bg-brand-900/20 text-brand-300' : 'border-surface-600 text-slate-300 hover:border-surface-500'}`}>
               <div className="font-medium">{v.name}</div>
               <div className="text-xs text-slate-500 mt-0.5">{v.language.toUpperCase()}</div>

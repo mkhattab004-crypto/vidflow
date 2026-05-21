@@ -13,6 +13,9 @@ VOICES = [
     {"id": "edge_ar_default", "name": "Shakir (AR Male)", "language": "ar"},
     {"id": "edge_en_default", "name": "Guy (EN Male)", "language": "en"},
     {"id": "edge_tr_default", "name": "Ahmet (TR Male)", "language": "tr"},
+    {"id": "gtts-ar", "name": "Arabic gTTS", "language": "ar"},
+    {"id": "gtts-en", "name": "English gTTS", "language": "en"},
+    {"id": "gtts-tr", "name": "Turkish gTTS", "language": "tr"},
 ]
 
 EDGE_DEFAULTS = {
@@ -85,6 +88,23 @@ def _select_edge_tts_voice(language: str | None) -> str:
     return settings.EDGE_TTS_VOICE or settings.EDGE_TTS_VOICE_EN or EDGE_DEFAULTS["en"][0]
 
 
+def _select_gtts_voice(language: str | None) -> str:
+    lang = _normalize_lang(language)
+    return f"gtts-{lang if lang in {'ar', 'en', 'tr'} else 'en'}"
+
+
+def _generate_with_gtts(text: str, language: str, output_path: str) -> str:
+    from gtts import gTTS
+
+    lang = _normalize_lang(language)
+    selected_lang = lang if lang in {"ar", "en", "tr"} else "en"
+    tts = gTTS(text=text, lang=selected_lang)
+    tts.save(output_path)
+    if not _valid_audio_file(output_path):
+        raise RuntimeError("gTTS output failed validation")
+    return f"gtts-{selected_lang}"
+
+
 def resolve_voice_for_project(language: str | None, selected_voice: str | None, user_selected: bool = False) -> tuple[str, str]:
     lang = _normalize_lang(language)
     lang_default_map = {"ar": "edge_ar_default", "en": "edge_en_default", "tr": "edge_tr_default"}
@@ -101,12 +121,19 @@ def resolve_voice_for_project(language: str | None, selected_voice: str | None, 
     return candidate, "user_selected"
 
 
-async def generate_speech(text: str, voice_id: str, speed: float = 1.0, output_dir: str = None, language: str = "en") -> str:
+async def generate_speech(
+    text: str,
+    voice_id: str,
+    speed: float = 1.0,
+    output_dir: str = None,
+    language: str = "en",
+    provider_override: str | None = None,
+) -> str:
     out_dir = output_dir or settings.OUTPUT_DIR
     os.makedirs(out_dir, exist_ok=True)
 
     selected_voice = _select_edge_tts_voice(language) if voice_id.startswith("edge_") else voice_id
-    provider = (settings.TTS_PROVIDER or "edge_tts").strip().lower()
+    provider = (provider_override or settings.TTS_PROVIDER or "edge_tts").strip().lower()
     filename = hashlib.md5(f"{selected_voice}_{speed}_{text[:100]}".encode()).hexdigest() + ".mp3"
     output_path = os.path.join(out_dir, filename)
 
@@ -146,7 +173,32 @@ async def generate_speech(text: str, voice_id: str, speed: float = 1.0, output_d
             raise RuntimeError("edge_tts output failed validation")
         except Exception as e:
             logger.error("edge_tts failed with error=%s", str(e), exc_info=True)
+            if settings.TTS_FALLBACK_ENABLED:
+                logger.info("edge_tts failed, attempting gtts fallback")
+                selected_gtts_voice = _generate_with_gtts(text=text, language=language, output_path=output_path)
+                logger.info(
+                    "provider_that_generated_audio=%s voice_that_generated_audio=%s audio_output_path=%s audio_size_bytes=%s audio_duration_seconds=%.3f fallback_used=true",
+                    "gtts",
+                    selected_gtts_voice,
+                    output_path,
+                    os.path.getsize(output_path) if os.path.exists(output_path) else 0,
+                    _probe_duration(output_path),
+                )
+                return output_path
             raise RuntimeError(f"Edge TTS failed: {e}") from e
+
+    if provider == "gtts":
+        logger.info(log_prefix, language, provider, _select_gtts_voice(language), "unknown", "gtts.gTTS", "false")
+        selected_gtts_voice = _generate_with_gtts(text=text, language=language, output_path=output_path)
+        logger.info(
+            "provider_that_generated_audio=%s voice_that_generated_audio=%s audio_output_path=%s audio_size_bytes=%s audio_duration_seconds=%.3f fallback_used=false",
+            "gtts",
+            selected_gtts_voice,
+            output_path,
+            os.path.getsize(output_path) if os.path.exists(output_path) else 0,
+            _probe_duration(output_path),
+        )
+        return output_path
 
     if provider == "free_api":
         api_url = (settings.FREE_TTS_API_URL or "").strip()
@@ -192,4 +244,4 @@ async def generate_speech(text: str, voice_id: str, speed: float = 1.0, output_d
             logger.error("free_api tts failed provider=%s error=%s", provider_name, str(e), exc_info=True)
             raise RuntimeError(f"Free TTS API failed: {e}") from e
 
-    raise RuntimeError(f"Unsupported TTS_PROVIDER '{provider}'. Allowed: edge_tts, free_api")
+    raise RuntimeError(f"Unsupported TTS_PROVIDER '{provider}'. Allowed: edge_tts, gtts, free_api")
