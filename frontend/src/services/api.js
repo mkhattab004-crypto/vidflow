@@ -83,7 +83,7 @@ export const getVisualGaps  = (pid)             => api.get(`/visuals/gap-analysi
 
 // ── Audio ─────────────────────────────────────────────────────────────────────
 
-export const getVoices         = (language)   => api.get('/audio/voices', { params: language ? { language } : {} }).then(toArr)
+export const getVoices         = ()           => api.get('/audio/voices').then(r => r.data)
 export const getVoicesByLang   = ()           => api.get('/audio/voices/by-language').then(r => r.data)
 export const generateAudio     = (data)       => api.post('/audio/generate', data).then(r => r.data)
 export const getTtsProvider    = (language)   => api.get('/audio/provider', { params: { language } }).then(r => r.data)
@@ -91,8 +91,8 @@ export const generateSceneAudio = (data)      => api.post('/audio/generate-scene
 export const getAudioStatus    = (id)         => api.get(`/audio/status/${id}`).then(r => r.data)
 export const getSceneTimings   = (id, voice, speed) =>
   api.get(`/audio/timings/${id}`, { params: { voice_id: voice, speed } }).then(r => r.data)
-export const previewVoiceUrl   = (text, voice, speed) =>
-  `/api/audio/preview?text=${encodeURIComponent(text)}&voice_id=${voice}&speed=${speed}`
+export const previewVoiceUrl   = (text, voice, speed, provider = 'edge_tts', language = 'en') =>
+  `/api/audio/preview?text=${encodeURIComponent(text)}&voice_id=${voice}&speed=${speed}&provider=${encodeURIComponent(provider)}&language=${encodeURIComponent(language)}`
 
 // ── Video ─────────────────────────────────────────────────────────────────────
 
